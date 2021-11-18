@@ -9,7 +9,9 @@ import numpy as np
 import taichi as ti
 import open3d as o3d
 
-ti.init(arch=ti.cpu)
+import matplotlib.cm as cm
+
+ti.init(arch=ti.metal)
 
 screen_res = (800, 400, 400)
 screen_to_world_ratio = 10.0
@@ -19,6 +21,7 @@ boundary = (screen_res[0] / screen_to_world_ratio,
 cell_size = 2.51
 cell_recpr = 1.0 / cell_size
 
+max_velocity = 15
 
 def round_up(f, s):
     return (math.floor(f * cell_recpr / s) + 1) * s
@@ -28,16 +31,17 @@ grid_size = (round_up(boundary[0], 1), round_up(boundary[1], 1), round_up(bounda
 
 dim = 3
 bg_color = 0x112f41
-particle_color = [1.0, 0.4, 0.2] #0x068587
+particle_color = [1.0, 0.4, 0.2]  # 0x068587
 boundary_color = 0xebaca2
-num_particles_x = 60
-num_particles_y = 30
-num_particles = num_particles_x * num_particles_y * 20
+num_particles_x = 30
+num_particles_y = 20
+num_particles_z = 20
+num_particles = num_particles_x * num_particles_y * num_particles_z
 max_num_particles_per_cell = 100
 max_num_neighbors = 100
 time_delta = 1.0 / 20.0
 epsilon = 1e-5
-particle_radius = 1.2 # change from 3.0
+particle_radius = 1.2  # change from 3.0
 particle_radius_in_world = particle_radius / screen_to_world_ratio
 
 # PBF params
@@ -46,11 +50,11 @@ mass = 1.0
 rho0 = 1.0
 lambda_epsilon = 100.0
 pbf_num_iters = 5
-corr_deltaQ_coeff = 0.3 # in the paper, 0.1-0.3 for use in Eq(13)
+corr_deltaQ_coeff = 0.3  # in the paper, 0.1-0.3 for use in Eq(13)
 corrK = 0.001
 # Need ti.pow()
 # corrN = 4.0
-neighbor_radius = h * 1.05 # TODO: need to change
+neighbor_radius = h * 1.05  # TODO: need to change
 
 poly6_factor = 315.0 / 64.0 / math.pi
 spiky_grad_factor = -45.0 / math.pi
@@ -76,6 +80,7 @@ nb_node.place(particle_num_neighbors)
 nb_node.dense(ti.j, max_num_neighbors).place(particle_neighbors)
 ti.root.dense(ti.i, num_particles).place(lambdas, position_deltas)
 ti.root.place(board_states)
+
 
 @ti.func
 def poly6_value(s, h):
@@ -177,7 +182,7 @@ def prologue():
         pos_i = positions[p_i]
         cell = get_cell(pos_i)
         nb_i = 0
-        for offs in ti.static(ti.grouped(ti.ndrange((-1, 2), (-1, 2), (-1,2)))):
+        for offs in ti.static(ti.grouped(ti.ndrange((-1, 2), (-1, 2), (-1, 2)))):
             cell_to_check = cell + offs
             if is_in_grid(cell_to_check):
                 for j in range(grid_num_particles[cell_to_check]):
@@ -211,11 +216,11 @@ def substep():
             # minus sign is omitted because of square (sign does not matter)
             # rho0 is added (previously omited in the example code)
             # grad_j = spiky_gradient(pos_ji, h) (example code)
-            grad_j = spiky_gradient(pos_ji, h)/rho0
+            grad_j = spiky_gradient(pos_ji, h) / rho0
             grad_i += grad_j
             sum_gradient_sqr += grad_j.dot(grad_j)
             # Eq(2)
-            density_constraint += poly6_value(pos_ji.norm(), h) # mass in Eq(2) is moved to Eq(1)
+            density_constraint += poly6_value(pos_ji.norm(), h)  # mass in Eq(2) is moved to Eq(1)
 
         # Eq(1)
         density_constraint = (mass * density_constraint / rho0) - 1.0
@@ -238,7 +243,7 @@ def substep():
             pos_ji = pos_i - positions[p_j]
             scorr_ij = compute_scorr(pos_ji)
             pos_delta_i += (lambda_i + lambda_j + scorr_ij) * \
-                spiky_gradient(pos_ji, h)
+                           spiky_gradient(pos_ji, h)
 
         pos_delta_i /= rho0
         position_deltas[p_i] = pos_delta_i
@@ -283,22 +288,23 @@ def render3d(vis, pcd, box):
     pcd.points = o3d.utility.Vector3dVector(pos_np)
     # uniform color looks bad
     # pcd.paint_uniform_color(particle_color)
+    v = np.linalg.norm(velocities.to_numpy(), axis=1) / max_velocity
+    pcd.colors = o3d.utility.Vector3dVector(cm.jet(v)[:, :3])
     vis.update_geometry(pcd)
-
-    box.translate(np.array([board_states[None][0], boundary[1]/2, boundary[2]/2])*screen_to_world_ratio,relative=False)
+    box.translate(np.array([board_states[None][0], boundary[1] / 2, boundary[2] / 2]) * screen_to_world_ratio, relative=False)
     vis.update_geometry(box)
+
 
 @ti.kernel
 def init_particles():
     for i in range(num_particles):
         delta = h * 0.8
-        offs = ti.Vector([(boundary[0] - delta * num_particles_x) * 0.5,
-                          boundary[1] * 0.02])
-        positions[i] = ti.Vector([i % num_particles_x, i // num_particles_x
-                                  ]) * delta + offs
+        offs = ti.Vector([(boundary[0] - delta * num_particles_x) * 0.5, boundary[1] * 0.02])
+        positions[i] = ti.Vector([i % num_particles_x, i // num_particles_x]) * delta + offs
         for c in ti.static(range(dim)):
             velocities[i][c] = (ti.random() - 0.5) * 4
     board_states[None] = ti.Vector([boundary[0] - epsilon, -0.0])
+
 
 @ti.kernel
 def init_particles_3d():
@@ -309,8 +315,7 @@ def init_particles_3d():
         offs = ti.Vector([(boundary[0] - delta * num_particles_x) * 0.5,
                           (boundary[1] - delta * num_particles_y) * 0.5,
                           boundary[2] * 0.02])
-        positions[i] = ti.Vector([i_mod_xy % num_particles_x, i_mod_xy // num_particles_x, i // num_particles_xy
-                                  ]) * delta + offs
+        positions[i] = ti.Vector([i_mod_xy % num_particles_x, i_mod_xy // num_particles_x, i // num_particles_xy]) * delta + offs
         for c in ti.static(range(dim)):
             velocities[i][c] = (ti.random() - 0.5) * 4
     board_states[None] = ti.Vector([boundary[0] - epsilon, -0.0])
@@ -325,13 +330,14 @@ def print_stats():
     avg, max = np.mean(num), np.max(num)
     print(f'  #neighbors per particle: avg={avg:.2f} max={max}')
 
+
 paused = True
 
+
 def main():
-    
     init_particles_3d()
     print(f'boundary={boundary} grid={grid_size} cell_size={cell_size}')
-    
+
     # setup gui
     vis = o3d.visualization.VisualizerWithKeyCallback()
     vis.create_window()
@@ -341,7 +347,7 @@ def main():
         paused = not paused
 
     vis.register_key_callback(ord(" "), pause)  # space
-    
+
     coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
         size=100, origin=[0, 0, 0]
     )
@@ -356,10 +362,10 @@ def main():
     pcd = o3d.geometry.PointCloud()
     vis.add_geometry(pcd)
 
-    box = o3d.geometry.TriangleMesh.create_box(5,screen_res[1],screen_res[2])
-    box.translate(np.array([screen_res[0],0,0]))
+    box = o3d.geometry.TriangleMesh.create_box(5, screen_res[1], screen_res[2])
+    box.translate(np.array([screen_res[0], 0, 0]))
     vis.add_geometry(box)
-    
+
     iter = 0
     while True:
         if not paused:
@@ -368,13 +374,14 @@ def main():
             if iter % 20 == 1:
                 print_stats()
             iter += 1
-            render3d(vis,pcd,box)
+            render3d(vis, pcd, box)
 
         if not vis.poll_events():
             break
 
         if not paused:
             vis.update_renderer()
+
 
 if __name__ == '__main__':
     main()
