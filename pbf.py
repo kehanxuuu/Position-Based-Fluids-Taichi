@@ -21,7 +21,8 @@ boundary = (screen_res[0] / screen_to_world_ratio,
 cell_size = 2.51
 cell_recpr = 1.0 / cell_size
 
-max_velocity = 15
+cm_max_velocity = 15
+
 
 def round_up(f, s):
     return (math.floor(f * cell_recpr / s) + 1) * s
@@ -35,7 +36,7 @@ particle_color = [1.0, 0.4, 0.2]  # 0x068587
 boundary_color = 0xebaca2
 num_particles_x = 30
 num_particles_y = 20
-num_particles_z = 20
+num_particles_z = 30
 num_particles = num_particles_x * num_particles_y * num_particles_z
 max_num_particles_per_cell = 100
 max_num_neighbors = 100
@@ -84,6 +85,7 @@ ti.root.place(board_states)
 
 @ti.func
 def poly6_value(s, h):
+    # See SIGGRAPH fluids notes P65
     result = 0.0
     if 0 < s and s < h:
         x = (h * h - s * s) / (h * h * h)
@@ -216,7 +218,7 @@ def substep():
             # minus sign is omitted because of square (sign does not matter)
             # rho0 is added (previously omited in the example code)
             # grad_j = spiky_gradient(pos_ji, h) (example code)
-            grad_j = spiky_gradient(pos_ji, h) / rho0
+            grad_j = spiky_gradient(pos_ji, h) * mass / rho0
             grad_i += grad_j
             sum_gradient_sqr += grad_j.dot(grad_j)
             # Eq(2)
@@ -245,7 +247,7 @@ def substep():
             pos_delta_i += (lambda_i + lambda_j + scorr_ij) * \
                            spiky_gradient(pos_ji, h)
 
-        pos_delta_i /= rho0
+        pos_delta_i *= mass / rho0
         position_deltas[p_i] = pos_delta_i
     # apply position deltas
     for i in positions:
@@ -271,25 +273,14 @@ def run_pbf():
     epilogue()
 
 
-def render(gui):
-    gui.clear(bg_color)
-    pos_np = positions.to_numpy()
-    for j in range(dim):
-        pos_np[:, j] *= screen_to_world_ratio / screen_res[j]
-    gui.circles(pos_np, radius=particle_radius, color=particle_color)
-    gui.rect((0, 0), (board_states[None][0] / boundary[0], 1),
-             radius=1.5,
-             color=boundary_color)
-    gui.show()
-
-def render3d(vis, pcd, box):
+def render(vis, pcd, box):
     pos_np = positions.to_numpy()
     pos_np *= screen_to_world_ratio
     pcd.points = o3d.utility.Vector3dVector(pos_np)
     # uniform color looks bad
     # pcd.paint_uniform_color(particle_color)
-    v = np.linalg.norm(velocities.to_numpy(), axis=1) / max_velocity
-    pcd.colors = o3d.utility.Vector3dVector(cm.jet(v)[:, :3])
+    velnorm_np = np.linalg.norm(velocities.to_numpy(), axis=1) / cm_max_velocity
+    pcd.colors = o3d.utility.Vector3dVector(cm.jet(velnorm_np)[:, :3])
     vis.update_geometry(pcd)
     box.translate(np.array([board_states[None][0], boundary[1] / 2, boundary[2] / 2]) * screen_to_world_ratio, relative=False)
     vis.update_geometry(box)
@@ -297,17 +288,6 @@ def render3d(vis, pcd, box):
 
 @ti.kernel
 def init_particles():
-    for i in range(num_particles):
-        delta = h * 0.8
-        offs = ti.Vector([(boundary[0] - delta * num_particles_x) * 0.5, boundary[1] * 0.02])
-        positions[i] = ti.Vector([i % num_particles_x, i // num_particles_x]) * delta + offs
-        for c in ti.static(range(dim)):
-            velocities[i][c] = (ti.random() - 0.5) * 4
-    board_states[None] = ti.Vector([boundary[0] - epsilon, -0.0])
-
-
-@ti.kernel
-def init_particles_3d():
     for i in range(num_particles):
         delta = h * 0.8
         num_particles_xy = num_particles_x * num_particles_y
@@ -335,7 +315,7 @@ paused = True
 
 
 def main():
-    init_particles_3d()
+    init_particles()
     print(f'boundary={boundary} grid={grid_size} cell_size={cell_size}')
 
     # setup gui
@@ -374,7 +354,7 @@ def main():
             if iter % 20 == 1:
                 print_stats()
             iter += 1
-            render3d(vis, pcd, box)
+            render(vis, pcd, box)
 
         if not vis.poll_events():
             break
