@@ -60,8 +60,8 @@ neighbor_radius = h * 1.05  # TODO: need to change
 poly6_factor = 315.0 / 64.0 / math.pi
 spiky_grad_factor = -45.0 / math.pi
 
-vorticity_epsilon = 0.0 # 0.25
-xsph_c = 0.0 # 0.01
+vorticity_epsilon = 0.1
+xsph_c = 0.01
 
 old_positions = ti.Vector.field(dim, float)
 positions = ti.Vector.field(dim, float)
@@ -263,7 +263,7 @@ def substep():
 
 
 @ti.kernel
-def epilogue():
+def epilogue(Vorticity_Epsilon: ti.f32, XSPH_C: ti.f32):
     # confine to boundary
     for i in positions:
         pos = positions[i]
@@ -296,7 +296,7 @@ def epilogue():
             loc_vec_i += mass * omegas[j].norm() * spiky_gradient(pos_ji, h) / rho0
 
         loc_vec_i = loc_vec_i / loc_vec_i.norm()
-        f_vorticity_i = vorticity_epsilon * loc_vec_i.cross(omegas[i])
+        f_vorticity_i = Vorticity_Epsilon * loc_vec_i.cross(omegas[i])
         velocities[i] += f_vorticity_i / mass * time_delta
 
     # XSPH Artificial Viscosity -> no obvious effect?
@@ -309,8 +309,8 @@ def epilogue():
                 break
             pos_ji = pos_i - positions[p_j]
             velocity_delta_i += mass * (velocities[j] - velocities[i]) * poly6_value(pos_ji.norm(), h) / rho0
-        velocities[i] += xsph_c * velocity_delta_i
-
+        velocities[i] += XSPH_C * velocity_delta_i
+            
 
 
 def run_pbf():
@@ -361,6 +361,7 @@ def print_stats():
     print(f'  #xsph_c value: {xsph_c:.5f}')
 
 
+reset = False
 paused = True
 
 
@@ -379,11 +380,11 @@ def main():
 
     def increaseVorticity(vis):
         global vorticity_epsilon
-        vorticity_epsilon += 0.25
-
+        vorticity_epsilon += 0.05
+    
     def decreaseVorticity(vis):
         global vorticity_epsilon
-        vorticity_epsilon -= 0.25
+        vorticity_epsilon -= 0.05
         if vorticity_epsilon <= 0:
             vorticity_epsilon = 0
 
