@@ -11,7 +11,7 @@ import open3d as o3d
 
 import matplotlib.cm as cm
 
-ti.init(arch=ti.gpu)
+ti.init(arch=ti.metal)
 
 screen_res = (800, 400, 400)  # z and y axis in the simulation are swapped for better visualization
 screen_to_world_ratio = 10.0
@@ -60,9 +60,13 @@ neighbor_radius = h * 1.05  # TODO: need to change
 poly6_factor = 315.0 / 64.0 / math.pi
 spiky_grad_factor = -45.0 / math.pi
 
+vorticity_epsilon = 0.0 # 0.25
+xsph_c = 0.0 # 0.01
+
 old_positions = ti.Vector.field(dim, float)
 positions = ti.Vector.field(dim, float)
 velocities = ti.Vector.field(dim, float)
+omegas = ti.Vector.field(dim, float)
 grid_num_particles = ti.field(int)
 grid2particles = ti.field(int)
 particle_num_neighbors = ti.field(int)
@@ -72,7 +76,7 @@ position_deltas = ti.Vector.field(dim, float)
 # 0: x-pos, 1: timestep in sin()
 board_states = ti.Vector.field(2, float)
 
-ti.root.dense(ti.i, num_particles).place(old_positions, positions, velocities)
+ti.root.dense(ti.i, num_particles).place(old_positions, positions, velocities, omegas)
 grid_snode = ti.root.dense(ti.ijk, grid_size)
 grid_snode.place(grid_num_particles)
 grid_snode.dense(ti.l, max_num_particles_per_cell).place(grid2particles)
@@ -85,9 +89,8 @@ ti.root.place(board_states)
 
 @ti.func
 def poly6_value(s, h):
-    # See SIGGRAPH fluids notes P65
     result = 0.0
-    if 0 < s and s < h:
+    if 0 <= s and s < h:
         x = (h * h - s * s) / (h * h * h)
         result = poly6_factor * x * x * x
     return result
@@ -268,7 +271,46 @@ def epilogue():
     # update velocities
     for i in positions:
         velocities[i] = (positions[i] - old_positions[i]) / time_delta
-    # no vorticity/xsph because we cannot do cross product in 2D...
+
+    # no need to update neighbour particle list regardless of change in positions, just as in multiple iterations of substep
+
+    # Vorticity Confinement
+    for i in positions:
+        pos_i = positions[i]
+        omegas[i] = ti.Vector([0.0, 0.0, 0.0])
+        for j in range(particle_num_neighbors[i]):
+            p_j = particle_neighbors[i, j]
+            if p_j < 0:
+                break
+            pos_ji = pos_i - positions[p_j]
+            omegas[i] += mass * (velocities[j] - velocities[i]).cross(spiky_gradient(pos_ji, h)) / rho0
+
+    for i in positions:
+        pos_i = positions[i]
+        loc_vec_i = ti.Vector([0.0, 0.0, 0.0])
+        for j in range(particle_num_neighbors[i]):
+            p_j = particle_neighbors[i, j]
+            if p_j < 0:
+                break
+            pos_ji = pos_i - positions[p_j]
+            loc_vec_i += mass * omegas[j].norm() * spiky_gradient(pos_ji, h) / rho0
+
+        loc_vec_i = loc_vec_i / loc_vec_i.norm()
+        f_vorticity_i = vorticity_epsilon * loc_vec_i.cross(omegas[i])
+        velocities[i] += f_vorticity_i / mass * time_delta
+
+    # XSPH Artificial Viscosity -> no obvious effect?
+    for i in positions:
+        pos_i = positions[i]
+        velocity_delta_i = ti.Vector([0.0, 0.0, 0.0])
+        for j in range(particle_num_neighbors[i]):
+            p_j = particle_neighbors[i, j]
+            if p_j < 0:
+                break
+            pos_ji = pos_i - positions[p_j]
+            velocity_delta_i += mass * (velocities[j] - velocities[i]) * poly6_value(pos_ji.norm(), h) / rho0
+        velocities[i] += xsph_c * velocity_delta_i
+
 
 
 def run_pbf():
@@ -315,24 +357,52 @@ def print_stats():
     num = particle_num_neighbors.to_numpy()
     avg, max = np.mean(num), np.max(num)
     print(f'  #neighbors per particle: avg={avg:.2f} max={max}')
+    print(f'  #vorticity_epsilon value: {vorticity_epsilon:.5f}')
+    print(f'  #xsph_c value: {xsph_c:.5f}')
 
 
 paused = True
 
 
 def main():
-    init_particles()
-    print(f'boundary={boundary} grid={grid_size} cell_size={cell_size}')
-
     # setup gui
     vis = o3d.visualization.VisualizerWithKeyCallback()
     vis.create_window()
+
+    def resetSimulation(vis):
+        global reset
+        reset = not reset
 
     def pause(vis):
         global paused
         paused = not paused
 
+    def increaseVorticity(vis):
+        global vorticity_epsilon
+        vorticity_epsilon += 0.25
+
+    def decreaseVorticity(vis):
+        global vorticity_epsilon
+        vorticity_epsilon -= 0.25
+        if vorticity_epsilon <= 0:
+            vorticity_epsilon = 0
+
+    def increaseViscosity(vis):
+        global xsph_c
+        xsph_c += 0.01
+
+    def decreaseViscosity(vis):
+        global xsph_c
+        xsph_c -= 0.01
+        if xsph_c <= 0:
+            xsph_c = 0
+
+    vis.register_key_callback(ord("R"), resetSimulation)
     vis.register_key_callback(ord(" "), pause)  # space
+    vis.register_key_callback(ord("E"), increaseVorticity)
+    vis.register_key_callback(ord("D"), decreaseVorticity)
+    vis.register_key_callback(ord("W"), increaseViscosity)
+    vis.register_key_callback(ord("S"), decreaseViscosity)
 
     coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
         size=100, origin=[0, 0, 0]
@@ -352,8 +422,16 @@ def main():
     box.translate(np.array([screen_res[0], 0, 0]))
     vis.add_geometry(box)
 
+    init_particles()
+    print(f'boundary={boundary} grid={grid_size} cell_size={cell_size}')
+
     iter = 0
     while True:
+        if reset:
+            init_particles()
+            resetSimulation(vis)
+            print(f'reset simulation')
+
         if not paused:
             move_board()
             run_pbf()
