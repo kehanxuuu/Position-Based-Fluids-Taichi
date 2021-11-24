@@ -11,7 +11,7 @@ import open3d as o3d
 
 import matplotlib.cm as cm
 
-ti.init(arch=ti.metal)
+ti.init(arch=ti.gpu)
 
 screen_res = (800, 400, 400)  # z and y axis in the simulation are swapped for better visualization
 screen_to_world_ratio = 10.0
@@ -61,11 +61,12 @@ poly6_factor = 315.0 / 64.0 / math.pi
 spiky_grad_factor = -45.0 / math.pi
 
 vorticity_epsilon = 0.1
-xsph_c = 0.01
+xsph_c = 0.00
 
 old_positions = ti.Vector.field(dim, float)
 positions = ti.Vector.field(dim, float)
 velocities = ti.Vector.field(dim, float)
+forces = ti.Vector.field(dim, float)
 omegas = ti.Vector.field(dim, float)
 grid_num_particles = ti.field(int)
 grid2particles = ti.field(int)
@@ -76,7 +77,7 @@ position_deltas = ti.Vector.field(dim, float)
 # 0: x-pos, 1: timestep in sin()
 board_states = ti.Vector.field(2, float)
 
-ti.root.dense(ti.i, num_particles).place(old_positions, positions, velocities, omegas)
+ti.root.dense(ti.i, num_particles).place(old_positions, positions, velocities, forces, omegas)
 grid_snode = ti.root.dense(ti.ijk, grid_size)
 grid_snode.place(grid_num_particles)
 grid_snode.dense(ti.l, max_num_particles_per_cell).place(grid2particles)
@@ -125,15 +126,13 @@ def get_cell(pos):
 @ti.func
 def is_in_grid(c):
     # @c: Vector(i32)
-    return 0 <= c[0] and c[0] < grid_size[0] and 0 <= c[1] and c[
-        1] < grid_size[1] and 0 <= c[2] and c[2] < grid_size[2]
+    return 0 <= c[0] and c[0] < grid_size[0] and 0 <= c[1] and c[1] < grid_size[1] and 0 <= c[2] and c[2] < grid_size[2]
 
 
 @ti.func
 def confine_position_to_boundary(p):
     bmin = particle_radius_in_world
-    bmax = ti.Vector([board_states[None][0], boundary[1], boundary[2]
-                      ]) - particle_radius_in_world
+    bmax = ti.Vector([board_states[None][0], boundary[1], boundary[2]]) - particle_radius_in_world
     for i in ti.static(range(dim)):
         # Use randomness to prevent particles from sticking into each other after clamping
         if p[i] <= bmin:
@@ -158,17 +157,6 @@ def move_board():
 
 @ti.kernel
 def prologue():
-    # save old positions
-    for i in positions:
-        old_positions[i] = positions[i]
-    # apply gravity within boundary
-    for i in positions:
-        g = ti.Vector([0.0, 0.0, -9.8])
-        pos, vel = positions[i], velocities[i]
-        vel += g * time_delta
-        pos += vel * time_delta
-        positions[i] = confine_position_to_boundary(pos)
-
     # clear neighbor lookup table
     for I in ti.grouped(grid_num_particles):
         grid_num_particles[I] = 0
@@ -263,7 +251,7 @@ def substep():
 
 
 @ti.kernel
-def epilogue(Vorticity_Epsilon: ti.f32, XSPH_C: ti.f32):
+def epilogue():
     # confine to boundary
     for i in positions:
         pos = positions[i]
@@ -274,10 +262,27 @@ def epilogue(Vorticity_Epsilon: ti.f32, XSPH_C: ti.f32):
 
     # no need to update neighbour particle list regardless of change in positions, just as in multiple iterations of substep
 
+
+@ti.kernel
+def clear_forces():
+    for i in forces:
+        forces[i] *= 0.0
+
+
+@ti.kernel
+def add_gravity():
+    # apply gravity within boundary
+    G = mass * ti.Vector([0.0, 0.0, -9.8])
+    for i in forces:
+        forces[i] += G
+
+
+@ti.kernel
+def add_vorticity_forces(Vorticity_Epsilon: ti.f32):
     # Vorticity Confinement
     for i in positions:
         pos_i = positions[i]
-        omegas[i] = ti.Vector([0.0, 0.0, 0.0])
+        omegas[i] = pos_i * 0.0
         for j in range(particle_num_neighbors[i]):
             p_j = particle_neighbors[i, j]
             if p_j < 0:
@@ -287,22 +292,38 @@ def epilogue(Vorticity_Epsilon: ti.f32, XSPH_C: ti.f32):
 
     for i in positions:
         pos_i = positions[i]
-        loc_vec_i = ti.Vector([0.0, 0.0, 0.0])
+        loc_vec_i = pos_i * 0.0
         for j in range(particle_num_neighbors[i]):
             p_j = particle_neighbors[i, j]
             if p_j < 0:
                 break
             pos_ji = pos_i - positions[p_j]
             loc_vec_i += mass * omegas[j].norm() * spiky_gradient(pos_ji, h) / rho0
+        omega_i = omegas[i]
+        loc_vec_i += mass * omega_i.norm() * spiky_gradient(pos_i * 0.0, h) / rho0
+        loc_vec_i = loc_vec_i / (epsilon + loc_vec_i.norm())
+        forces[i] += Vorticity_Epsilon * loc_vec_i.cross(omega_i)
 
-        loc_vec_i = loc_vec_i / loc_vec_i.norm()
-        f_vorticity_i = Vorticity_Epsilon * loc_vec_i.cross(omegas[i])
-        velocities[i] += f_vorticity_i / mass * time_delta
 
+@ti.kernel
+def apply_forces():
+    for i in velocities:
+        velocities[i] += forces[i] / mass * time_delta
+
+
+@ti.kernel
+def update_positions():
+    for i in positions:
+        positions[i] += velocities[i] * time_delta
+        positions[i] = confine_position_to_boundary(positions[i])
+
+
+@ti.kernel
+def apply_viscosity(XSPH_C: ti.f32):
     # XSPH Artificial Viscosity -> no obvious effect?
     for i in positions:
         pos_i = positions[i]
-        velocity_delta_i = ti.Vector([0.0, 0.0, 0.0])
+        velocity_delta_i = pos_i * 0.0
         for j in range(particle_num_neighbors[i]):
             p_j = particle_neighbors[i, j]
             if p_j < 0:
@@ -310,10 +331,25 @@ def epilogue(Vorticity_Epsilon: ti.f32, XSPH_C: ti.f32):
             pos_ji = pos_i - positions[p_j]
             velocity_delta_i += mass * (velocities[j] - velocities[i]) * poly6_value(pos_ji.norm(), h) / rho0
         velocities[i] += XSPH_C * velocity_delta_i
-            
+
+
+@ti.kernel
+def save_old_pos():
+    for i in positions:
+        old_positions[i] = positions[i]
 
 
 def run_pbf():
+    save_old_pos()
+    clear_forces()
+    add_gravity()
+    add_vorticity_forces(vorticity_epsilon)
+    # TODO: damping
+    apply_forces()
+    apply_viscosity(xsph_c)
+    update_positions()
+
+    # PBD Algorithm:
     prologue()
     for _ in range(pbf_num_iters):
         substep()
@@ -391,7 +427,7 @@ def main():
     def increaseViscosity(vis):
         global xsph_c
         xsph_c += 0.01
-
+    
     def decreaseViscosity(vis):
         global xsph_c
         xsph_c -= 0.01
