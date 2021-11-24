@@ -13,11 +13,11 @@ import matplotlib.cm as cm
 
 ti.init(arch=ti.gpu)
 
-screen_res = (800, 400, 400)
+screen_res = (800, 400, 400)  # z and y axis in the simulation are swapped for better visualization
 screen_to_world_ratio = 10.0
 boundary = (screen_res[0] / screen_to_world_ratio,
-            screen_res[1] / screen_to_world_ratio,
-            screen_res[2] / screen_to_world_ratio)
+            screen_res[2] / screen_to_world_ratio,
+            screen_res[1] / screen_to_world_ratio)
 cell_size = 2.51
 cell_recpr = 1.0 / cell_size
 
@@ -281,6 +281,7 @@ def run_pbf():
 def render(vis, pcd, box):
     pos_np = positions.to_numpy()
     pos_np *= screen_to_world_ratio
+    pos_np = pos_np[:, (0, 2, 1)]  # recap: z and y axis in the simulation are swapped for better visualization
     pcd.points = o3d.utility.Vector3dVector(pos_np)
     # uniform color looks bad
     # pcd.paint_uniform_color(particle_color)
