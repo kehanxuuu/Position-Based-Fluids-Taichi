@@ -11,7 +11,7 @@ import open3d as o3d
 
 import matplotlib.cm as cm
 
-ti.init(arch=ti.metal)
+ti.init(arch=ti.gpu)
 
 screen_res = (800, 400, 400)
 screen_to_world_ratio = 10.0
@@ -36,7 +36,7 @@ particle_color = [1.0, 0.4, 0.2]  # 0x068587
 boundary_color = 0xebaca2
 num_particles_x = 30
 num_particles_y = 20
-num_particles_z = 30
+num_particles_z = 20
 num_particles = num_particles_x * num_particles_y * num_particles_z
 max_num_particles_per_cell = 100
 max_num_neighbors = 100
@@ -200,6 +200,7 @@ def prologue():
 def substep():
     # compute lambdas
     # Eq (8) ~ (11)
+    pos_zero = 0.0 * positions[0]
     for p_i in positions:
         pos_i = positions[p_i]
 
@@ -225,11 +226,13 @@ def substep():
             density_constraint += poly6_value(pos_ji.norm(), h)  # mass in Eq(2) is moved to Eq(1)
 
         # Eq(1)
-        density_constraint = (mass * density_constraint / rho0) - 1.0
+        density_constraint += poly6_value(0, h)  # self contribution
+        grad_i += spiky_gradient(pos_zero, h)
 
+        density_constraint = (mass * density_constraint / rho0) - 1.0
         sum_gradient_sqr += grad_i.dot(grad_i)
-        lambdas[p_i] = (-density_constraint) / (sum_gradient_sqr +
-                                                lambda_epsilon)
+        lambdas[p_i] = (-density_constraint) / (sum_gradient_sqr + lambda_epsilon)
+
     # compute position deltas
     # Eq(12), (14)
     for p_i in positions:
@@ -244,8 +247,10 @@ def substep():
             lambda_j = lambdas[p_j]
             pos_ji = pos_i - positions[p_j]
             scorr_ij = compute_scorr(pos_ji)
-            pos_delta_i += (lambda_i + lambda_j + scorr_ij) * \
-                           spiky_gradient(pos_ji, h)
+            pos_delta_i += (lambda_i + lambda_j + scorr_ij) * spiky_gradient(pos_ji, h)
+
+        scorr_ii = compute_scorr(pos_zero)
+        pos_delta_i += (lambda_i + lambda_i + scorr_ii) * spiky_gradient(pos_zero, h)  # self contribution
 
         pos_delta_i *= mass / rho0
         position_deltas[p_i] = pos_delta_i
