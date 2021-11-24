@@ -376,10 +376,11 @@ def init_particles():
         delta = h * 0.8
         num_particles_xy = num_particles_x * num_particles_y
         i_mod_xy = i % num_particles_xy
-        offs = ti.Vector([(boundary[0] - delta * num_particles_x) * 0.5,
+        i_mod_x = i % num_particles_x
+        offs = ti.Vector([(boundary[0] - delta * num_particles_x) * (0.0 if i_mod_x < num_particles_x // 2 else 0.9),
                           (boundary[1] - delta * num_particles_y) * 0.5,
-                          boundary[2] * 0.02])
-        positions[i] = ti.Vector([i_mod_xy % num_particles_x, i_mod_xy // num_particles_x, i // num_particles_xy]) * delta + offs
+                          boundary[2] * 0.5])
+        positions[i] = ti.Vector([i_mod_x, i_mod_xy // num_particles_x, i // num_particles_xy]) * delta + offs
         for c in ti.static(range(dim)):
             velocities[i][c] = (ti.random() - 0.5) * 4
     board_states[None] = ti.Vector([boundary[0] - epsilon, -0.0])
@@ -417,7 +418,7 @@ def main():
     def increaseVorticity(vis):
         global vorticity_epsilon
         vorticity_epsilon += 0.05
-    
+
     def decreaseVorticity(vis):
         global vorticity_epsilon
         vorticity_epsilon -= 0.05
@@ -427,7 +428,7 @@ def main():
     def increaseViscosity(vis):
         global xsph_c
         xsph_c += 0.01
-    
+
     def decreaseViscosity(vis):
         global xsph_c
         xsph_c -= 0.01
