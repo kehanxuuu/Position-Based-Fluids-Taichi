@@ -32,9 +32,9 @@ grid_size = (round_up(boundary[0], 1), round_up(boundary[1], 1), round_up(bounda
 
 dim = 3
 bg_color = 0x112f41
-particle_color = 'density'
+particle_color = 'velocity'
 boundary_color = 0xebaca2
-num_particles_x = 30
+num_particles_x = 40
 num_particles_y = 20
 num_particles_z = 20
 num_particles = num_particles_x * num_particles_y * num_particles_z
@@ -60,14 +60,15 @@ neighbor_radius = h * 1.05  # TODO: need to change
 poly6_factor = 315.0 / 64.0 / math.pi
 spiky_grad_factor = -45.0 / math.pi
 
-vorticity_epsilon = 0.1
-xsph_c = 0.00
+vorticity_epsilon = 0.0
+xsph_c = 0.2
 
 old_positions = ti.Vector.field(dim, float)
 positions = ti.Vector.field(dim, float)
 velocities = ti.Vector.field(dim, float)
 forces = ti.Vector.field(dim, float)
 omegas = ti.Vector.field(dim, float)
+density = ti.field(float)
 grid_num_particles = ti.field(int)
 grid2particles = ti.field(int)
 particle_num_neighbors = ti.field(int)
@@ -77,7 +78,7 @@ position_deltas = ti.Vector.field(dim, float)
 # 0: x-pos, 1: timestep in sin()
 board_states = ti.Vector.field(2, float)
 
-ti.root.dense(ti.i, num_particles).place(old_positions, positions, velocities, forces, omegas)
+ti.root.dense(ti.i, num_particles).place(old_positions, positions, velocities, forces, omegas, density)
 grid_snode = ti.root.dense(ti.ijk, grid_size)
 grid_snode.place(grid_num_particles)
 grid_snode.dense(ti.l, max_num_particles_per_cell).place(grid2particles)
@@ -86,10 +87,6 @@ nb_node.place(particle_num_neighbors)
 nb_node.dense(ti.j, max_num_neighbors).place(particle_neighbors)
 ti.root.dense(ti.i, num_particles).place(lambdas, position_deltas)
 ti.root.place(board_states)
-
-if particle_color == 'density':
-    density = ti.field(float)
-    ti.root.dense(ti.i, num_particles).place(density)
 
 @ti.func
 def poly6_value(s, h):
@@ -310,7 +307,7 @@ def add_vorticity_forces(Vorticity_Epsilon: ti.f32):
             if p_j < 0:
                 break
             pos_ji = pos_i - positions[p_j]
-            omegas[i] += mass * (velocities[j] - velocities[i]).cross(spiky_gradient(pos_ji, h)) / rho0
+            omegas[i] += mass * (velocities[j] - velocities[i]).cross(spiky_gradient(pos_ji, h)) / (epsilon + density[j])
 
     for i in positions:
         pos_i = positions[i]
@@ -320,9 +317,9 @@ def add_vorticity_forces(Vorticity_Epsilon: ti.f32):
             if p_j < 0:
                 break
             pos_ji = pos_i - positions[p_j]
-            loc_vec_i += mass * omegas[j].norm() * spiky_gradient(pos_ji, h) / rho0
+            loc_vec_i += mass * omegas[j].norm() * spiky_gradient(pos_ji, h) / (epsilon + density[j])
         omega_i = omegas[i]
-        loc_vec_i += mass * omega_i.norm() * spiky_gradient(pos_i * 0.0, h) / rho0
+        loc_vec_i += mass * omega_i.norm() * spiky_gradient(pos_i * 0.0, h) / (epsilon + density[i])
         loc_vec_i = loc_vec_i / (epsilon + loc_vec_i.norm())
         forces[i] += Vorticity_Epsilon * loc_vec_i.cross(omega_i)
 
@@ -351,7 +348,7 @@ def apply_viscosity(XSPH_C: ti.f32):
             if p_j < 0:
                 break
             pos_ji = pos_i - positions[p_j]
-            velocity_delta_i += mass * (velocities[j] - velocities[i]) * poly6_value(pos_ji.norm(), h) / rho0
+            velocity_delta_i += mass * (velocities[j] - velocities[i]) * poly6_value(pos_ji.norm(), h) / (epsilon + density[i])
         velocities[i] += XSPH_C * velocity_delta_i
 
 
@@ -365,6 +362,9 @@ def run_pbf():
     save_old_pos()
     clear_forces()
     add_gravity()
+    # voricity confinement
+    prologue()
+    compute_density()
     add_vorticity_forces(vorticity_epsilon)
     # TODO: damping
     apply_forces()
