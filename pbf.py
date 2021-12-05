@@ -11,7 +11,7 @@ import open3d as o3d
 
 import matplotlib.cm as cm
 
-ti.init(arch=ti.gpu)
+ti.init(arch=ti.cpu)
 
 screen_res = (800, 400, 400)  # z and y axis in the simulation are swapped for better visualization
 screen_to_world_ratio = 10.0
@@ -22,7 +22,7 @@ cell_size = 2.51
 cell_recpr = 1.0 / cell_size
 
 cm_max_velocity = 15
-
+cm_max_vorticity = 20
 
 def round_up(f, s):
     return (math.floor(f * cell_recpr / s) + 1) * s
@@ -32,7 +32,7 @@ grid_size = (round_up(boundary[0], 1), round_up(boundary[1], 1), round_up(bounda
 
 dim = 3
 bg_color = 0x112f41
-particle_color = [1.0, 0.4, 0.2]  # 0x068587
+particle_color = 'density'
 boundary_color = 0xebaca2
 num_particles_x = 30
 num_particles_y = 20
@@ -87,6 +87,9 @@ nb_node.dense(ti.j, max_num_neighbors).place(particle_neighbors)
 ti.root.dense(ti.i, num_particles).place(lambdas, position_deltas)
 ti.root.place(board_states)
 
+if particle_color == 'density':
+    density = ti.field(float)
+    ti.root.dense(ti.i, num_particles).place(density)
 
 @ti.func
 def poly6_value(s, h):
@@ -191,6 +194,7 @@ def prologue():
 def substep():
     # compute lambdas
     # Eq (8) ~ (11)
+    
     pos_zero = 0.0 * positions[0]
     for p_i in positions:
         pos_i = positions[p_i]
@@ -223,7 +227,7 @@ def substep():
         density_constraint = (mass * density_constraint / rho0) - 1.0
         sum_gradient_sqr += grad_i.dot(grad_i)
         lambdas[p_i] = (-density_constraint) / (sum_gradient_sqr + lambda_epsilon)
-
+    
     # compute position deltas
     # Eq(12), (14)
     for p_i in positions:
@@ -262,7 +266,25 @@ def epilogue():
 
     # no need to update neighbour particle list regardless of change in positions, just as in multiple iterations of substep
 
+@ti.kernel
+def compute_density():
+    for p_i in positions:
+        pos_i = positions[p_i]
+        density_constraint = 0.0
 
+        for j in range(particle_num_neighbors[p_i]):
+            p_j = particle_neighbors[p_i, j]
+            if p_j < 0:
+                break
+            pos_ji = pos_i - positions[p_j]
+            # Eq(2)
+            density_constraint += poly6_value(pos_ji.norm(), h)  # mass in Eq(2) is moved to Eq(1)
+
+        # Eq(1)
+        density_constraint += poly6_value(0, h)  # self contribution
+        density[p_i] = mass * density_constraint
+
+        
 @ti.kernel
 def clear_forces():
     for i in forces:
@@ -361,10 +383,22 @@ def render(vis, pcd, box):
     pos_np *= screen_to_world_ratio
     pos_np = pos_np[:, (0, 2, 1)]  # recap: z and y axis in the simulation are swapped for better visualization
     pcd.points = o3d.utility.Vector3dVector(pos_np)
-    # uniform color looks bad
-    # pcd.paint_uniform_color(particle_color)
-    velnorm_np = np.linalg.norm(velocities.to_numpy(), axis=1) / cm_max_velocity
-    pcd.colors = o3d.utility.Vector3dVector(cm.jet(velnorm_np)[:, :3])
+    if particle_color == 'velocity':
+        velnorm_np = np.linalg.norm(velocities.to_numpy(), axis=1) / cm_max_velocity
+        pcd.colors = o3d.utility.Vector3dVector(cm.jet(velnorm_np)[:, :3])
+    elif particle_color == 'density':
+        prologue()
+        compute_density()
+        density_np = density.to_numpy()
+        if (density_np<rho0).any():
+            print('Exists density smaller than rho0')
+        density_np = (density_np - rho0) * 0.5 + 0.5
+        pcd.colors = o3d.utility.Vector3dVector(cm.RdBu(density_np)[:, :3])
+    elif particle_color == 'vorticity':
+        omegas_np = np.linalg.norm(omegas.to_numpy(), axis=1) / cm_max_vorticity
+        pcd.colors = o3d.utility.Vector3dVector(cm.YlGnBu(omegas_np)[:, :3])
+    else:
+        raise 'unknown particle color key'
     vis.update_geometry(pcd)
     box.translate(np.array([board_states[None][0], boundary[1] / 2, boundary[2] / 2]) * screen_to_world_ratio, relative=False)
     vis.update_geometry(box)
