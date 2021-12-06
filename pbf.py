@@ -157,7 +157,7 @@ def move_board():
 
 
 @ti.kernel
-def prologue():
+def find_neighbour():
     # clear neighbor lookup table
     for I in ti.grouped(grid_num_particles):
         grid_num_particles[I] = 0
@@ -253,7 +253,7 @@ def substep():
 
 
 @ti.kernel
-def epilogue():
+def update_velocity_from_position():
     # confine to boundary
     for i in positions:
         pos = positions[i]
@@ -262,7 +262,6 @@ def epilogue():
     for i in positions:
         velocities[i] = (positions[i] - old_positions[i]) / time_delta
 
-    # no need to update neighbour particle list regardless of change in positions, just as in multiple iterations of substep
 
 @ti.kernel
 def compute_density():
@@ -332,7 +331,7 @@ def apply_forces():
 
 
 @ti.kernel
-def update_positions():
+def update_position_from_velocity():
     for i in positions:
         positions[i] += velocities[i] * time_delta
         positions[i] = confine_position_to_boundary(positions[i])
@@ -366,19 +365,19 @@ def run_pbf():
     clear_forces()
     add_gravity()
     # voricity confinement
-    prologue()
+    find_neighbour()
     compute_density()
     add_vorticity_forces(vorticity_epsilon)
     # TODO: damping
     apply_forces()
     apply_viscosity(xsph_c)
-    update_positions()
+    update_position_from_velocity()
 
     # PBD Algorithm:
-    prologue()
+    find_neighbour()
     for _ in range(pbf_num_iters):
         substep()
-    epilogue()
+    update_velocity_from_position()
 
 
 def render(vis, pcd, box):
@@ -390,7 +389,7 @@ def render(vis, pcd, box):
         velnorm_np = np.linalg.norm(velocities.to_numpy(), axis=1) / cm_max_velocity
         pcd.colors = o3d.utility.Vector3dVector(cm.jet(velnorm_np)[:, :3])
     elif particle_color == 'density':
-        prologue()
+        find_neighbour()
         compute_density()
         density_np = density.to_numpy()
         if (density_np<rho0).any():
