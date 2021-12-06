@@ -3,7 +3,7 @@
 # Build upon the 2D Taichi implementation by Ye Kuang (k-ye)
 
 import math
-
+import time
 import numpy as np
 
 import taichi as ti
@@ -34,9 +34,9 @@ dim = 3
 bg_color = 0x112f41
 particle_color = 'velocity'
 boundary_color = 0xebaca2
-num_particles_x = 20 #40
-num_particles_y = 20 #20
-num_particles_z = 20 #20
+num_particles_x = 40
+num_particles_y = 20
+num_particles_z = 20
 num_particles = num_particles_x * num_particles_y * num_particles_z
 max_num_particles_per_cell = 100
 max_num_neighbors = 100
@@ -61,7 +61,7 @@ poly6_factor = 315.0 / 64.0 / math.pi
 spiky_grad_factor = -45.0 / math.pi
 
 vorticity_epsilon = 0.0
-xsph_c = 0.2
+xsph_c = 0.0
 
 old_positions = ti.Vector.field(dim, float)
 positions = ti.Vector.field(dim, float)
@@ -361,16 +361,32 @@ def save_old_pos():
 
 
 def run_pbf():
+    # method 1: our way of updating, 0.06s per frame on mac
+    # find neighbour twice (time consuming)
+    # save_old_pos()
+    # clear_forces()
+    # add_gravity()
+    # # voricity confinement
+    # find_neighbour()
+    # compute_density()
+    # add_vorticity_forces(vorticity_epsilon)
+    # # TODO: damping
+    # apply_forces()
+    # apply_viscosity(xsph_c)
+    # update_position_from_velocity()
+
+    # # PBD Algorithm:
+    # find_neighbour()
+    # for _ in range(pbf_num_iters):
+    #     substep()
+    # update_velocity_from_position()
+
+    # method 2: same to the paper, 0.046s per frame on mac
+    # only find neighbour once, but clear and apply force twice
     save_old_pos()
     clear_forces()
     add_gravity()
-    # voricity confinement
-    find_neighbour()
-    compute_density()
-    add_vorticity_forces(vorticity_epsilon)
-    # TODO: damping
     apply_forces()
-    apply_viscosity(xsph_c)
     update_position_from_velocity()
 
     # PBD Algorithm:
@@ -378,6 +394,11 @@ def run_pbf():
     for _ in range(pbf_num_iters):
         substep()
     update_velocity_from_position()
+    clear_forces()
+    compute_density()
+    add_vorticity_forces(vorticity_epsilon)
+    apply_forces()
+    apply_viscosity(xsph_c)
 
 
 def render(vis, pcd, box):
@@ -422,7 +443,7 @@ def init_particles():
     board_states[None] = ti.Vector([boundary[0] - epsilon, -0.0])
 
 
-def print_stats():
+def print_stats(time_interval):
     print('PBF stats:')
     num = grid_num_particles.to_numpy()
     avg, max = np.mean(num), np.max(num)
@@ -432,6 +453,7 @@ def print_stats():
     print(f'  #neighbors per particle: avg={avg:.2f} max={max}')
     print(f'  #vorticity_epsilon value: {vorticity_epsilon:.5f}')
     print(f'  #xsph_c value: {xsph_c:.5f}')
+    print(f'  #time per frame: {time_interval:.5f}')
 
 
 reset = False
@@ -463,11 +485,11 @@ def main():
 
     def increaseViscosity(vis):
         global xsph_c
-        xsph_c += 0.03
+        xsph_c += 0.05
 
     def decreaseViscosity(vis):
         global xsph_c
-        xsph_c -= 0.03
+        xsph_c -= 0.05
         if xsph_c <= 0:
             xsph_c = 0
 
@@ -507,12 +529,14 @@ def main():
             print(f'reset simulation')
 
         if not paused:
+            start_time = time.time()
             move_board()
             run_pbf()
-            if iter % 20 == 1:
-                print_stats()
-            iter += 1
             render(vis, pcd, box)
+            if iter % 20 == 1:
+                time_interval = time.time() - start_time
+                print_stats(time_interval)
+            iter += 1
 
         if not vis.poll_events():
             break
