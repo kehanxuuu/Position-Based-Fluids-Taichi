@@ -32,7 +32,7 @@ grid_size = (round_up(boundary[0], 1), round_up(boundary[1], 1), round_up(bounda
 
 dim = 3
 bg_color = 0x112f41
-particle_color = 'velocity'
+particle_color = 'density'
 boundary_color = 0xebaca2
 num_particles_x = 40
 num_particles_y = 20
@@ -79,14 +79,14 @@ position_deltas = ti.Vector.field(dim, float)
 # 0: x-pos, 1: timestep in sin()
 board_states = ti.Vector.field(2, float)
 
-ti.root.dense(ti.i, num_particles).place(old_positions, positions, velocities, forces, omegas, velocities_delta, density)
+ti.root.dense(ti.i, num_particles).place(old_positions, positions, velocities, forces, omegas, density)
 grid_snode = ti.root.dense(ti.ijk, grid_size)
 grid_snode.place(grid_num_particles)
 grid_snode.dense(ti.l, max_num_particles_per_cell).place(grid2particles)
 nb_node = ti.root.dense(ti.i, num_particles)
 nb_node.place(particle_num_neighbors)
 nb_node.dense(ti.j, max_num_neighbors).place(particle_neighbors)
-ti.root.dense(ti.i, num_particles).place(lambdas, position_deltas)
+ti.root.dense(ti.i, num_particles).place(lambdas, position_deltas, velocities_delta)
 ti.root.place(board_states)
 
 @ti.func
@@ -193,7 +193,6 @@ def substep():
     # compute lambdas
     # Eq (8) ~ (11)
     
-    pos_zero = 0.0 * positions[0]
     for p_i in positions:
         pos_i = positions[p_i]
 
@@ -220,7 +219,7 @@ def substep():
 
         # Eq(1)
         density_constraint += poly6_value(0, h)  # self contribution
-        grad_i += spiky_gradient(pos_zero, h)
+        # grad_i += spiky_gradient(pos_zero, h)
 
         density_constraint = (mass * density_constraint / rho0) - 1.0
         sum_gradient_sqr += grad_i.dot(grad_i)
@@ -242,8 +241,8 @@ def substep():
             scorr_ij = compute_scorr(pos_ji)
             pos_delta_i += (lambda_i + lambda_j + scorr_ij) * spiky_gradient(pos_ji, h)
 
-        scorr_ii = compute_scorr(pos_zero)
-        pos_delta_i += (lambda_i + lambda_i + scorr_ii) * spiky_gradient(pos_zero, h)  # self contribution
+        # scorr_ii = compute_scorr(pos_zero)
+        # pos_delta_i += (lambda_i + lambda_i + scorr_ii) * spiky_gradient(pos_zero, h)
 
         pos_delta_i *= mass / rho0
         position_deltas[p_i] = pos_delta_i
@@ -279,7 +278,7 @@ def compute_density():
 
         # Eq(1)
         density_constraint += poly6_value(0, h)  # self contribution
-        density[p_i] = density_constraint
+        density[p_i] = density_constraint * mass
 
         
 @ti.kernel
@@ -319,7 +318,7 @@ def add_vorticity_forces(Vorticity_Epsilon: ti.f32):
             pos_ji = pos_i - positions[p_j]
             loc_vec_i += mass * omegas[p_j].norm() * spiky_gradient(pos_ji, h) / (epsilon + density[p_j])
         omega_i = omegas[i]
-        loc_vec_i += mass * omega_i.norm() * spiky_gradient(pos_i * 0.0, h) / (epsilon + density[i])
+        # loc_vec_i += mass * omega_i.norm() * spiky_gradient(pos_i * 0.0, h) / (epsilon + density[i])
         loc_vec_i = loc_vec_i / (epsilon + loc_vec_i.norm())
         forces[i] += Vorticity_Epsilon * loc_vec_i.cross(omega_i)
 
@@ -413,15 +412,16 @@ def render(vis, pcd, box):
         find_neighbour()
         compute_density()
         density_np = density.to_numpy()
-        if (density_np<rho0).any():
-            print('Exists density smaller than rho0')
-        density_np = (density_np - rho0) * 0.5 + 0.5
+        print(f'{density_np.min()=}, {density_np.max()=}, {density_np.mean()=}')
+        # if (density_np < rho0).any():
+        #     print('Exists density smaller than rho0')
+        density_np = density_np / rho0 * 0.5  # map to [0, 1]
         pcd.colors = o3d.utility.Vector3dVector(cm.RdBu(density_np)[:, :3])
     elif particle_color == 'vorticity':
         omegas_np = np.linalg.norm(omegas.to_numpy(), axis=1) / cm_max_vorticity
         pcd.colors = o3d.utility.Vector3dVector(cm.YlGnBu(omegas_np)[:, :3])
     else:
-        raise 'unknown particle color key'
+        raise ValueError('unknown particle color key')
     vis.update_geometry(pcd)
     box.translate(np.array([board_states[None][0], boundary[1] / 2, boundary[2] / 2]) * screen_to_world_ratio, relative=False)
     vis.update_geometry(box)
