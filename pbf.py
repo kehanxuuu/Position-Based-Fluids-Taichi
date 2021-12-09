@@ -3,8 +3,12 @@
 # Build upon the 2D Taichi implementation by Ye Kuang (k-ye)
 
 import numpy as np
+import open3d as o3d
+from matplotlib import cm
 
 from utils import *
+
+from rigidbody import RigidObjectField
 
 
 @ti.data_oriented
@@ -34,6 +38,8 @@ class Fluid(object):
         nb_node.dense(ti.j, max_num_neighbors).place(self.particle_neighbors)
         ti.root.dense(ti.i, num_particles).place(self.lambdas, self.position_deltas, self.velocities_delta)
         ti.root.place(self.board_states)
+
+        self.pcd = o3d.geometry.PointCloud()
 
     @ti.func
     def confine_position_to_boundary(self, p):
@@ -187,7 +193,7 @@ class Fluid(object):
     @ti.kernel
     def add_gravity(self):
         # apply gravity within boundary
-        G = mass * ti.Vector([0.0, 0.0, -9.8])
+        G = mass * ti.Vector([0.0, 0.0, -g_const])
         for i in self.forces:
             self.forces[i] += G
 
@@ -317,3 +323,25 @@ class Fluid(object):
         print(f'  #vorticity_epsilon value: {vorticity_epsilon:.5f}')
         print(f'  #xsph_c value: {xsph_c:.5f}')
         print(f'  #time per frame: {time_interval:.5f}')
+        density_np = self.density.to_numpy()
+        print(f'  {density_np.min()=}, {density_np.max()=}, {density_np.mean()=}')
+
+    def update_point_cloud(self):
+        pos_np = self.positions.to_numpy()
+        pos_np *= screen_to_world_ratio
+        pos_np = pos_np[:, (0, 2, 1)]  # recap: z and y axis in the simulation are swapped for better visualization
+        self.pcd.points = o3d.utility.Vector3dVector(pos_np)
+        if particle_color == 'velocity':
+            velnorm_np = np.linalg.norm(self.velocities.to_numpy(), axis=1) / cm_max_velocity
+            self.colors = o3d.utility.Vector3dVector(cm.jet(velnorm_np)[:, :3])
+        elif particle_color == 'density':
+            # fluid.find_neighbour()
+            # fluid.compute_density()
+            density_np = self.density.to_numpy()
+            density_np = density_np / rho0 * 0.5  # map to [0, 1]
+            self.pcd.colors = o3d.utility.Vector3dVector(cm.RdBu(density_np)[:, :3])
+        elif particle_color == 'vorticity':
+            omegas_np = np.linalg.norm(self.omegas.to_numpy(), axis=1) / cm_max_vorticity
+            self.pcd.colors = o3d.utility.Vector3dVector(cm.YlGnBu(omegas_np)[:, :3])
+        else:
+            raise ValueError(f'Unknown particle color key {particle_color}')

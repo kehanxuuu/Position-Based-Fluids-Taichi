@@ -1,5 +1,7 @@
 import math
 
+device = 'gpu'
+
 screen_res = (800, 400, 400)  # z and y axis in the simulation are swapped for better visualization
 screen_to_world_ratio = 10.0
 boundary = (screen_res[0] / screen_to_world_ratio,
@@ -22,7 +24,7 @@ dim = 3
 bg_color = 0x112f41
 particle_color = 'density'
 boundary_color = 0xebaca2
-num_particles_x = 40
+num_particles_x = 20
 num_particles_y = 20
 num_particles_z = 20
 num_particles = num_particles_x * num_particles_y * num_particles_z
@@ -37,6 +39,7 @@ particle_radius_in_world = particle_radius / screen_to_world_ratio
 h = 1.1
 mass = 1.0
 rho0 = 1.0
+g_const = 9.8
 lambda_epsilon = 100.0
 pbf_num_iters = 5
 corr_deltaQ_coeff = 0.3  # in the paper, 0.1-0.3 for use in Eq(13)
