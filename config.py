@@ -1,6 +1,6 @@
 import math
 
-device = 'gpu'
+device = 'cpu'
 
 screen_res = (800, 400, 400)  # z and y axis in the simulation are swapped for better visualization
 screen_to_world_ratio = 10.0
@@ -22,7 +22,7 @@ grid_size = (round_up(boundary[0], 1), round_up(boundary[1], 1), round_up(bounda
 
 dim = 3
 bg_color = 0x112f41
-particle_color = 'density'
+particle_color = 'velocity'
 boundary_color = 0xebaca2
 num_particles_x = 20
 num_particles_y = 20
@@ -47,6 +47,10 @@ corrK = 0.001
 # Need ti.pow()
 # corrN = 4.0
 neighbor_radius = h * 1.05  # TODO: need to change
+
+# Collision params
+collision_eps = 0.2  # vrel+ / vrel-
+boundary_stiffness = 200  # for force based collision
 
 poly6_factor = 315.0 / 64.0 / math.pi
 spiky_grad_factor = -45.0 / math.pi
