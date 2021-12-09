@@ -14,6 +14,13 @@ from rigidbody import RigidObjectField
 @ti.data_oriented
 class Fluid(object):
     def __init__(self):
+        self.dt = time_delta
+        self.pbf_num_iters = pbf_num_iters
+        self.xsph_c = xsph_c
+        self.vorticity_epsilon = vorticity_epsilon
+        self.collisions_eps = collision_eps
+        self.particle_color = particle_color
+
         self.old_positions = ti.Vector.field(dim, float)
         self.positions = ti.Vector.field(dim, float)
         self.velocities = ti.Vector.field(dim, float)
@@ -41,17 +48,71 @@ class Fluid(object):
 
         self.pcd = o3d.geometry.PointCloud()
 
+        self.boundary_handled_by_collision = ti.field(int, shape=())
+        self.boundary_handled_by_confinement = ti.field(int, shape=())
+
+    @ti.kernel
+    def clear_stats(self):
+        self.boundary_handled_by_collision[None] = 0
+        self.boundary_handled_by_confinement[None] = 0
+
     @ti.func
     def confine_position_to_boundary(self, p):
-        bmin = particle_radius_in_world
-        bmax = ti.Vector([self.board_states[None][0], boundary[1], boundary[2]]) - particle_radius_in_world
+        """
+        Simply confine the position into the boundary, no collision response generated
+        """
+        bmin = particle_radius_in_world * 0.1
+        bmax = ti.Vector([self.board_states[None][0], boundary[1], boundary[2]]) - particle_radius_in_world * 0.1
+        has_confinement = 0
         for i in ti.static(range(dim)):
             # Use randomness to prevent particles from sticking into each other after clamping
             if p[i] <= bmin:
                 p[i] = bmin + epsilon * ti.random()
+                has_confinement = 1
             elif bmax[i] <= p[i]:
                 p[i] = bmax[i] - epsilon * ti.random()
+                has_confinement = 1
+        if has_confinement >= 0.5:
+            self.boundary_handled_by_confinement[None] += 1
         return p
+
+    @ti.kernel
+    def handle_boundary_collisions(self, eps: ti.f32):
+        """
+        Detect boundary collisions, confine positions, and add impulse to velocities
+        """
+        bmin = particle_radius_in_world
+        bmax = ti.Vector([self.board_states[None][0], boundary[1], boundary[2]]) - particle_radius_in_world
+        for i in self.positions:
+            pos = self.positions[i]
+            has_collision = 0
+            normal = ti.Vector([0.0, 0.0, 0.0])  # from solid to liquid
+            v_boundary = ti.Vector([0.0, 0.0, 0.0])
+            for j in ti.static(range(dim)):
+                # Use randomness to prevent particles from sticking into each other after clamping
+                if pos[j] <= bmin:
+
+                    pos[j] = bmin + epsilon * ti.random()
+                    normal[j] = 1.0
+                    has_collision = 1
+                elif bmax[j] <= pos[j]:
+                    pos[j] = bmax[j] - epsilon * ti.random()
+                    normal[j] = -1.0
+                    has_collision = 1
+                    if j == 0:  # hit the board
+                        v_boundary[j] = self.board_speed(self.board_states[None][1])
+
+            self.positions[i] = pos
+            if has_collision >= 0.5:
+                # add impulse from boundary to velocity
+                self.boundary_handled_by_collision[None] += 1
+                normal = normal.normalized()
+                vel = self.velocities[i]
+                vrel_before = vel - v_boundary
+                vrel_before_orth = vrel_before.dot(normal) * normal
+                vrel_before_para = vrel_before - vrel_before_orth
+                vrel_after = vrel_before_para + -eps * vrel_before_orth
+                self.velocities[i] = vrel_after + v_boundary
 
     @ti.kernel
     def move_board(self):
@@ -59,11 +120,16 @@ class Fluid(object):
         b = self.board_states[None]
         b[1] += 1.0
         period = 90
-        vel_strength = 8.0
         if b[1] >= 2 * period:
             b[1] = 0
-        b[0] += -ti.sin(b[1] * np.pi / period) * vel_strength * time_delta
+        b[0] += self.board_speed(b[1]) * self.dt
         self.board_states[None] = b
+
+    @ti.func
+    def board_speed(self, t: ti.f32) -> ti.f32:
+        period = 90
+        vel_strength = 8.0
+        return -ti.sin(t * np.pi / period) * vel_strength
 
     @ti.kernel
     def find_neighbour(self):
@@ -148,9 +214,6 @@ class Fluid(object):
                 scorr_ij = compute_scorr(pos_ji)
                 pos_delta_i += (lambda_i + lambda_j + scorr_ij) * spiky_gradient(pos_ji, h)
 
-            # scorr_ii = compute_scorr(pos_zero)
-            # pos_delta_i += (lambda_i + lambda_i + scorr_ii) * spiky_gradient(pos_zero, h)
-
             pos_delta_i *= mass / rho0
             self.position_deltas[p_i] = pos_delta_i
         # apply position deltas
@@ -165,7 +228,7 @@ class Fluid(object):
             self.positions[i] = self.confine_position_to_boundary(pos)
         # update velocities
         for i in self.positions:
-            self.velocities[i] = (self.positions[i] - self.old_positions[i]) / time_delta
+            self.velocities[i] = (self.positions[i] - self.old_positions[i]) / self.dt
 
     @ti.kernel
     def compute_density(self):
@@ -227,12 +290,12 @@ class Fluid(object):
     @ti.kernel
     def apply_forces(self):
         for i in self.velocities:
-            self.velocities[i] += self.forces[i] / mass * time_delta
+            self.velocities[i] += self.forces[i] / mass * self.dt
 
     @ti.kernel
     def update_position_from_velocity(self):
         for i in self.positions:
-            self.positions[i] += self.velocities[i] * time_delta
+            self.positions[i] += self.velocities[i] * self.dt
             self.positions[i] = self.confine_position_to_boundary(self.positions[i])
 
     @ti.kernel
@@ -284,18 +347,20 @@ class Fluid(object):
         self.clear_forces()
         self.add_gravity()
         self.apply_forces()
+        self.handle_boundary_collisions(self.collisions_eps)  # regard collision impulse as external forces
         self.update_position_from_velocity()
 
         # PBD Algorithm:
         self.find_neighbour()
-        for _ in range(pbf_num_iters):
+        for _ in range(self.pbf_num_iters):
             self.substep()
         self.update_velocity_from_position()
+
         self.clear_forces()
         self.compute_density()
-        self.add_vorticity_forces(vorticity_epsilon)
+        self.add_vorticity_forces(self.vorticity_epsilon)
         self.apply_forces()
-        self.apply_viscosity(xsph_c)
+        self.apply_viscosity(self.xsph_c)
 
     @ti.kernel
     def init_particles(self):
@@ -320,28 +385,35 @@ class Fluid(object):
         num = self.particle_num_neighbors.to_numpy()
         avg, max = np.mean(num), np.max(num)
         print(f'  #neighbors per particle: avg={avg:.2f} max={max}')
-        print(f'  #vorticity_epsilon value: {vorticity_epsilon:.5f}')
-        print(f'  #xsph_c value: {xsph_c:.5f}')
-        print(f'  #time per frame: {time_interval:.5f}')
+        print(f'  #fps: {1 / time_interval:.2f}')
+        print(f'  #vorticity_epsilon value: {self.vorticity_epsilon:.5f}')
+        print(f'  #xsph_c value: {self.xsph_c:.5f}')
+        print(f'  #collisionEps value: {self.collisions_eps:.5f}')
         density_np = self.density.to_numpy()
         print(f'  {density_np.min()=}, {density_np.max()=}, {density_np.mean()=}')
+        collision = self.boundary_handled_by_collision.to_numpy()
+        confinement = self.boundary_handled_by_confinement.to_numpy()
+        total_boundary = collision + confinement
+        print(f'  boundary handled by collision:   {collision / float(total_boundary) * 100:.2f}%')
+        print(f'  boundary handled by confinement: {confinement / float(total_boundary) * 100:.2f}%')
+        self.clear_stats()
 
     def update_point_cloud(self):
         pos_np = self.positions.to_numpy()
         pos_np *= screen_to_world_ratio
         pos_np = pos_np[:, (0, 2, 1)]  # recap: z and y axis in the simulation are swapped for better visualization
         self.pcd.points = o3d.utility.Vector3dVector(pos_np)
-        if particle_color == 'velocity':
+        if self.particle_color == 'velocity':
             velnorm_np = np.linalg.norm(self.velocities.to_numpy(), axis=1) / cm_max_velocity
-            self.colors = o3d.utility.Vector3dVector(cm.jet(velnorm_np)[:, :3])
-        elif particle_color == 'density':
+            self.pcd.colors = o3d.utility.Vector3dVector(cm.jet(velnorm_np)[:, :3])
+        elif self.particle_color == 'density':
             # fluid.find_neighbour()
             # fluid.compute_density()
             density_np = self.density.to_numpy()
             density_np = density_np / rho0 * 0.5  # map to [0, 1]
             self.pcd.colors = o3d.utility.Vector3dVector(cm.RdBu(density_np)[:, :3])
-        elif particle_color == 'vorticity':
+        elif self.particle_color == 'vorticity':
             omegas_np = np.linalg.norm(self.omegas.to_numpy(), axis=1) / cm_max_vorticity
             self.pcd.colors = o3d.utility.Vector3dVector(cm.YlGnBu(omegas_np)[:, :3])
         else:
-            raise ValueError(f'Unknown particle color key {particle_color}')
+            raise ValueError(f'Unknown particle color key {self.particle_color}')

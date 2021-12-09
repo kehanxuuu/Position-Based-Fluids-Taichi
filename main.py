@@ -8,8 +8,8 @@ def render(vis, fluid: Fluid, cube: Cube, box):
     vis.update_geometry(fluid.pcd)
     box.translate(np.array([fluid.board_states[None][0], boundary[1] / 2, boundary[2] / 2]) * screen_to_world_ratio, relative=False)
     vis.update_geometry(box)
-    for mesh in cube.meshes.ravel():
-        vis.update_geometry(mesh)
+    # for mesh in cube.meshes.ravel():
+    #     vis.update_geometry(mesh)
 
 
 def main():
@@ -25,6 +25,11 @@ def main():
             self.paused = False
 
     control = GUIState()
+
+    fluid = Fluid()
+    fluid.init_particles()
+    fluid.update_point_cloud()
+    vis.add_geometry(fluid.pcd)
 
     def resetSimulation(_):
         control.reset ^= 1
@@ -43,14 +48,23 @@ def main():
             vorticity_epsilon = 0
 
     def increaseViscosity(_):
-        global xsph_c
-        xsph_c += 0.05
+        fluid.xsph_c += 0.05
 
     def decreaseViscosity(_):
-        global xsph_c
-        xsph_c -= 0.05
-        if xsph_c <= 0:
-            xsph_c = 0
+        fluid.xsph_c -= 0.05
+        fluid.xsph_c = max(0, fluid.xsph_c)
+
+    def increaseCollisionEps(_):
+        fluid.collisions_eps += 0.1
+
+    def decreaseCollisionEps(_):
+        fluid.collisions_eps -= 0.1
+        fluid.collisions_eps = max(0, fluid.collisions_eps)
+
+    def make_particle_color_callback(color: str):
+        def callback(_):
+            fluid.particle_color = color
+        return callback
 
     vis.register_key_callback(ord("R"), resetSimulation)
     vis.register_key_callback(ord(" "), pause)  # space
@@ -58,6 +72,11 @@ def main():
     vis.register_key_callback(ord("D"), decreaseVorticity)
     vis.register_key_callback(ord("W"), increaseViscosity)
     vis.register_key_callback(ord("S"), decreaseViscosity)
+    vis.register_key_callback(ord("2"), increaseCollisionEps)
+    vis.register_key_callback(ord("1"), decreaseCollisionEps)
+    vis.register_key_callback(ord("5"), make_particle_color_callback('velocity'))
+    vis.register_key_callback(ord("6"), make_particle_color_callback('density'))
+    vis.register_key_callback(ord("7"), make_particle_color_callback('vorticity'))
 
     coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
         size=100, origin=[0, 0, 0]
@@ -74,15 +93,10 @@ def main():
     box.translate(np.array([screen_res[0], 0, 0]))
     vis.add_geometry(box)
 
-    fluid = Fluid()
-    fluid.init_particles()
-    fluid.update_point_cloud()
     cube = Cube()
-
-    vis.add_geometry(fluid.pcd)
-    for mesh in cube.meshes.ravel():
-        print(mesh)
-        vis.add_geometry(mesh)
+    # for mesh in cube.meshes.ravel():
+    #     print(mesh)
+    #     vis.add_geometry(mesh)
 
     print(f'boundary={boundary} grid={grid_size} cell_size={cell_size}')
 
@@ -100,7 +114,7 @@ def main():
             fluid.move_board()
             fluid.run_pbf()
             fluid.update_point_cloud()
-            cube.step()
+            # cube.step()
 
             render(vis, fluid, cube, box)
             if iter % 20 == 1:
