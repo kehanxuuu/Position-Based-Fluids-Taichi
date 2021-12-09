@@ -61,6 +61,12 @@ def main():
         fluid.collisions_eps -= 0.1
         fluid.collisions_eps = max(0, fluid.collisions_eps)
 
+    def increaseStiffness(_):
+        fluid.boundary_stiffness *= 3
+
+    def decreaseStiffness(_):
+        fluid.boundary_stiffness /= 3
+
     def make_particle_color_callback(color: str):
         def callback(_):
             fluid.particle_color = color
@@ -72,8 +78,8 @@ def main():
     vis.register_key_callback(ord("D"), decreaseVorticity)
     vis.register_key_callback(ord("W"), increaseViscosity)
     vis.register_key_callback(ord("S"), decreaseViscosity)
-    vis.register_key_callback(ord("2"), increaseCollisionEps)
-    vis.register_key_callback(ord("1"), decreaseCollisionEps)
+    vis.register_key_callback(ord("2"), increaseStiffness)
+    vis.register_key_callback(ord("1"), decreaseStiffness)
     vis.register_key_callback(ord("5"), make_particle_color_callback('velocity'))
     vis.register_key_callback(ord("6"), make_particle_color_callback('density'))
     vis.register_key_callback(ord("7"), make_particle_color_callback('vorticity'))

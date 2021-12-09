@@ -50,6 +50,7 @@ neighbor_radius = h * 1.05  # TODO: need to change
 
 # Collision params
 collision_eps = 0.2  # vrel+ / vrel-
+boundary_stiffness = 200  # for force based collision
 
 poly6_factor = 315.0 / 64.0 / math.pi
 spiky_grad_factor = -45.0 / math.pi

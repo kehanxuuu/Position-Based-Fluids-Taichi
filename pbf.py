@@ -19,6 +19,7 @@ class Fluid(object):
         self.xsph_c = xsph_c
         self.vorticity_epsilon = vorticity_epsilon
         self.collisions_eps = collision_eps
+        self.boundary_stiffness = boundary_stiffness
         self.particle_color = particle_color
 
         self.old_positions = ti.Vector.field(dim, float)
@@ -77,7 +78,7 @@ class Fluid(object):
         return p
 
     @ti.kernel
-    def handle_boundary_collisions(self, eps: ti.f32):
+    def add_boundary_collision_impulses(self, eps: ti.f32):
         """
         Detect boundary collisions, confine positions, and add impulse to velocities
         """
@@ -113,6 +114,31 @@ class Fluid(object):
                 vrel_before_para = vrel_before - vrel_before_orth
                 vrel_after = vrel_before_para + -eps * vrel_before_orth
                 self.velocities[i] = vrel_after + v_boundary
+
+    @ti.kernel
+    def add_boundary_collision_forces(self, stiffness: ti.f32):
+        """
+        Detect boundary collisions, and add elastic force to velocities
+        """
+        bmin = particle_radius_in_world
+        bmax = ti.Vector([self.board_states[None][0], boundary[1], boundary[2]]) - particle_radius_in_world
+        for i in self.positions:
+            pos = self.positions[i]
+            has_collision = 0
+            dp = ti.Vector([0.0, 0.0, 0.0])  # stress from solid to liquid
+            for j in ti.static(range(dim)):
+                # Use randomness to prevent particles from sticking into each other after clamping
+                if pos[j] <= bmin:
+                    dp[j] = bmin - pos[j]
+                    has_collision = 1
+                elif bmax[j] <= pos[j]:
+                    dp[j] = bmax[j] - pos[j]
+                    has_collision = 1
+
+            if has_collision >= 0.5:
+                # add force according to Hooke's law
+                self.boundary_handled_by_collision[None] += 1
+                self.forces[i] += stiffness * dp
 
     @ti.kernel
     def move_board(self):
@@ -346,8 +372,8 @@ class Fluid(object):
         self.save_old_pos()
         self.clear_forces()
         self.add_gravity()
+        self.add_boundary_collision_forces(self.boundary_stiffness)  # regard collision as external forces
         self.apply_forces()
-        self.handle_boundary_collisions(self.collisions_eps)  # regard collision impulse as external forces
         self.update_position_from_velocity()
 
         # PBD Algorithm:
@@ -385,10 +411,10 @@ class Fluid(object):
         num = self.particle_num_neighbors.to_numpy()
         avg, max = np.mean(num), np.max(num)
         print(f'  #neighbors per particle: avg={avg:.2f} max={max}')
-        print(f'  #fps: {1 / time_interval:.2f}')
-        print(f'  #vorticity_epsilon value: {self.vorticity_epsilon:.5f}')
-        print(f'  #xsph_c value: {self.xsph_c:.5f}')
-        print(f'  #collisionEps value: {self.collisions_eps:.5f}')
+        print(f'  fps: {1 / time_interval:.2f}')
+        print(f'  vorticity_epsilon value: {self.vorticity_epsilon:.5f}')
+        print(f'  xsph_c value: {self.xsph_c:.5f}')
+        print(f'  {self.boundary_stiffness = :.2e}')
         density_np = self.density.to_numpy()
         print(f'  {density_np.min()=}, {density_np.max()=}, {density_np.mean()=}')
         collision = self.boundary_handled_by_collision.to_numpy()
