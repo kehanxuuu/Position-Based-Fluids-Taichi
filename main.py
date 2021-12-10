@@ -1,15 +1,15 @@
 import time
 
 from pbf import *
-from rigidbody import Cube
+from rigidbody import *
 
 
-def render(vis, fluid: Fluid, cube: Cube, box):
+def render(vis, fluid: Fluid, rigid: RigidObjectField, box):
     vis.update_geometry(fluid.pcd)
-    box.translate(np.array([fluid.board_states[None][0], boundary[1] / 2, boundary[2] / 2]) * screen_to_world_ratio, relative=False)
+    box.translate(np.array([fluid.board_states[None][0], boundary[2] / 2, boundary[1] / 2]) * screen_to_world_ratio, relative=False)
     vis.update_geometry(box)
-    # for mesh in cube.meshes.ravel():
-    #     vis.update_geometry(mesh)
+    for mesh in rigid.meshes.ravel():
+        vis.update_geometry(mesh)
 
 
 def main():
@@ -22,11 +22,15 @@ def main():
     class GUIState:
         def __init__(self):
             self.reset = False
-            self.paused = False
+            self.paused = True
 
     control = GUIState()
 
-    fluid = Fluid()
+    rigid = Ball()
+    for mesh in rigid.meshes.ravel():
+        vis.add_geometry(mesh)
+
+    fluid = Fluid(rigid)
     fluid.init_particles()
     fluid.update_point_cloud()
     vis.add_geometry(fluid.pcd)
@@ -95,14 +99,9 @@ def main():
     aabb.color = [0.7, 0.7, 0.7]
     vis.add_geometry(aabb)  # bounding box
 
-    box = o3d.geometry.TriangleMesh.create_box(5, screen_res[1], screen_res[2])
-    box.translate(np.array([screen_res[0], 0, 0]))
+    box = o3d.geometry.TriangleMesh.create_box(3, screen_res[1], screen_res[2])
+    box.translate(np.array([screen_res[0], screen_res[1] / 2, screen_res[2] / 2]), relative=False)
     vis.add_geometry(box)
-
-    cube = Cube()
-    # for mesh in cube.meshes.ravel():
-    #     print(mesh)
-    #     vis.add_geometry(mesh)
 
     print(f'boundary={boundary} grid={grid_size} cell_size={cell_size}')
 
@@ -110,7 +109,7 @@ def main():
     while True:
         if control.reset:
             fluid.init_particles()
-            cube.reinitialize()
+            rigid.reinitialize()
             resetSimulation(vis)
             print(f'reset simulation')
 
@@ -120,12 +119,14 @@ def main():
             fluid.move_board()
             fluid.run_pbf()
             fluid.update_point_cloud()
-            # cube.step()
+            rigid.step()
 
-            render(vis, fluid, cube, box)
+            render(vis, fluid, rigid, box)
             if iter % 20 == 1:
                 time_interval = time.time() - start_time
                 fluid.print_stats(time_interval)
+                # ball_pos = rigid.pos.to_numpy()
+                # print(ball_pos)
             iter += 1
 
         if not vis.poll_events():
