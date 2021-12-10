@@ -14,18 +14,27 @@ class ObjType:
 
 @ti.data_oriented
 class RigidObjectField(object):
-    def __init__(self, paths, shape=()):
+    def __init__(self, paths, scalings=1.0):
+        """
+        Initialize a rigid body **field** with given path and scale settings.
+        If the params are a single str and float, the returned rigid body field is actually one rigid body.
+        If the params are ndarrays, the returned rigid body field has the same shape as params.
+
+        :param paths: str or ndarray of strings, path to .off mesh files
+        :param scalings: float or ndarray of floats, scale factor applied to the mesh vertices
+        """
         self.paths = np.array(paths)
-        self.shape = shape
+        self.scalings = np.array(scalings, dtype=np.float32)
+        self.shape = self.paths.shape
         # meshes are numpy arrays in favor of rendering
         self.meshes = np.ndarray(shape=self.shape, dtype=o3d.geometry.TriangleMesh)
 
-        if self.paths.shape != self.shape:
-            raise AttributeError(f"Error: paths does not have the correct shape! {self.paths.shape} instead of {self.shape}")
+        if self.scalings.shape != self.shape:
+            raise AttributeError(f"Error: scalings does not have the correct shape! {self.scalings.shape} instead of {self.shape}")
 
         # create ranges to iterate over
         self.shape_ranges = []
-        for dim in shape:
+        for dim in self.shape:
             self.shape_ranges.append(list(range(dim)))
 
         # create the meshes
@@ -59,7 +68,7 @@ class RigidObjectField(object):
             np.array([0.1, 0.3, 1.0], dtype=np.float32), (*self.shape, self.max_num_vertices, 1)
         )
         for e in itertools.product(*self.shape_ranges):
-            vertices[e][: n_vertices[e]] = np.asarray(self.meshes[e].vertices)[:, (0, 2, 1)]
+            vertices[e][: n_vertices[e]] = np.asarray(self.meshes[e].vertices)[:, (0, 2, 1)] * self.scalings[e]
             faces[e][: n_faces[e]] = np.asarray(self.meshes[e].triangles)
 
         self.nV.from_numpy(n_vertices)
@@ -117,97 +126,97 @@ class RigidObjectField(object):
             com = ti.Vector([0.0, 0.0, 0.0])
 
     @ti.func
-    def get_type(self, idx=ti.Vector([])):
+    def get_type(self, idx=()):
         return self.type[idx]
 
     @ti.func
-    def get_mass(self, idx=ti.Vector([])):
+    def get_mass(self, idx=()):
         return self.mass[idx]
 
     @ti.func
-    def get_massInv(self, idx=ti.Vector([])):
+    def get_massInv(self, idx=()):
         return self.massInv[idx]
 
     @ti.func
-    def get_position(self, idx=ti.Vector([])):
+    def get_position(self, idx=()):
         return self.pos[idx]
 
     @ti.func
-    def get_rotation(self, idx=ti.Vector([])):
+    def get_rotation(self, idx=()):
         return self.quat[idx]
 
     @ti.func
-    def get_rotation_matrix(self, idx=ti.Vector([])):
+    def get_rotation_matrix(self, idx=()):
         return self.rot[idx]
 
     @ti.func
-    def get_scale(self, idx=ti.Vector([])):
+    def get_scale(self, idx=()):
         return self.scale[idx]
 
     @ti.func
-    def get_inertia(self, idx=ti.Vector([])):
+    def get_inertia(self, idx=()):
         return self.inertia[idx]
 
     @ti.func
-    def get_inertiaInv(self, idx=ti.Vector([])):
+    def get_inertiaInv(self, idx=()):
         return self.inertiaInv[idx]
 
     @ti.func
-    def get_inertia_world(self, idx=ti.Vector([])):
+    def get_inertia_world(self, idx=()):
         return self.rot[idx] @ self.inertia[idx] @ self.rot[idx].inverse()
 
     @ti.func
-    def get_inertiaInv_world(self, idx=ti.Vector([])):
+    def get_inertiaInv_world(self, idx=()):
         return self.rot[idx] @ self.inertiaInv[idx] @ self.rot[idx].inverse()
 
     @ti.func
-    def get_linear_momentum(self, idx=ti.Vector([])):
+    def get_linear_momentum(self, idx=()):
         return self.v[idx] * self.mass[idx]
 
     @ti.func
-    def get_angular_momentum(self, idx=ti.Vector([])):
+    def get_angular_momentum(self, idx=()):
         return self.get_inertia_world(idx) @ self.w[idx]
 
     @ti.func
-    def get_linear_velocity(self, idx=ti.Vector([])):
+    def get_linear_velocity(self, idx=()):
         return self.v[idx]
 
     @ti.func
-    def get_angular_velocity(self, idx=ti.Vector([])):
+    def get_angular_velocity(self, idx=()):
         return self.w[idx]
 
     @ti.func
-    def get_velocity(self, p, idx=ti.Vector([])):
+    def get_velocity(self, p, idx=()):
         return self.get_linear_velocity(idx) + self.get_angular_velocity(idx).cross(
             p - self.pos[idx]
         )
 
     @ti.func
-    def get_force(self, idx=ti.Vector([])):
+    def get_force(self, idx=()):
         return self.force[idx]
 
     @ti.func
-    def get_torque(self, idx=ti.Vector([])):
+    def get_torque(self, idx=()):
         return self.torque[idx]
 
     @ti.func
-    def apply_force_to_COM(self, f, idx=ti.Vector([])):
+    def apply_force_to_COM(self, f, idx=()):
         if self.type[idx] == int(ObjType.DYNAMIC):
             self.force[idx] += f
 
     @ti.func
-    def apply_force(self, f, p, idx=ti.Vector([])):
+    def apply_force(self, f, p, idx=()):
         if self.type[idx] == int(ObjType.DYNAMIC):
             self.force[idx] += f
             self.torque[idx] += (p - self.pos[idx]).cross(f)
 
     @ti.func
-    def apply_torque(self, t, idx=ti.Vector([])):
+    def apply_torque(self, t, idx=()):
         if self.type[idx] == int(ObjType.DYNAMIC):
             self.torque[idx] += t
 
     @ti.func
-    def set_type(self, t, idx=ti.Vector([])):
+    def set_type(self, t, idx=()):
         self.type[idx] = t
 
         if self.type[idx] == ObjType.STATIC:
@@ -219,72 +228,72 @@ class RigidObjectField(object):
             self.torque[idx] = ti.Vector([0.0, 0.0, 0.0])
 
     @ti.func
-    def set_mass(self, m, idx=ti.Vector([])):
+    def set_mass(self, m, idx=()):
         if self.type[idx] == int(ObjType.DYNAMIC):
             self.mass[idx] = m
             self.massInv[idx] = 1.0 / self.mass[idx]
 
     @ti.func
-    def set_color(self, c, idx=ti.Vector([])):
+    def set_color(self, c, idx=()):
         for i in range(self.nV[idx]):
             self.C[(*idx, i)] = c
 
     @ti.func
-    def set_colors(self, C, idx=ti.Vector([])):
+    def set_colors(self, C, idx=()):
         for i in range(self.nV[idx]):
             self.C[(*idx, i)] = C[i]
 
     @ti.func
-    def set_position(self, p, idx=ti.Vector([])):
+    def set_position(self, p, idx=()):
         self.pos[idx] = p
 
     @ti.func
-    def set_rotation(self, q, idx=ti.Vector([])):
+    def set_rotation(self, q, idx=()):
         self.quat[idx] = q
         self.rot[idx] = utils.quaternion_to_matrix(q)
 
     @ti.func
-    def set_rotation_matrix(self, R, idx=ti.Vector([])):
+    def set_rotation_matrix(self, R, idx=()):
         self.rot[idx] = R
         self.quat[idx] = utils.matrix_to_quaternion(R)
 
     @ti.func
-    def set_scale(self, s, idx=ti.Vector([])):
+    def set_scale(self, s, idx=()):
         self.scale[idx] = s
 
     @ti.func
-    def set_inertia(self, _I, idx=ti.Vector([])):
+    def set_inertia(self, _I, idx=()):
         if self.type[idx] == int(ObjType.DYNAMIC):
             self.inertia[idx] = _I
             self.inertiaInv[idx] = self.inertia[idx].inverse()
 
     @ti.func
-    def set_linear_momentum(self, p, idx=ti.Vector([])):
+    def set_linear_momentum(self, p, idx=()):
         if self.type[idx] == int(ObjType.DYNAMIC):
             self.v[idx] = self.massInv[idx] * p
 
     @ti.func
-    def set_angular_momentum(self, _l, idx=ti.Vector([])):
+    def set_angular_momentum(self, _l, idx=()):
         if self.type[idx] == int(ObjType.DYNAMIC):
             self.w[idx] = self.get_inertiaInv_world(idx) @ _l
 
     @ti.func
-    def set_linear_velocity(self, v, idx=ti.Vector([])):
+    def set_linear_velocity(self, v, idx=()):
         if self.type[idx] == int(ObjType.DYNAMIC):
             self.v[idx] = v
 
     @ti.func
-    def set_angular_velocity(self, w, idx=ti.Vector([])):
+    def set_angular_velocity(self, w, idx=()):
         if self.type[idx] == int(ObjType.DYNAMIC):
             self.w[idx] = w
 
     @ti.func
-    def set_force(self, f, idx=ti.Vector([])):
+    def set_force(self, f, idx=()):
         if self.type[idx] == int(ObjType.DYNAMIC):
             self.force[idx] = f
 
     @ti.func
-    def set_torque(self, t, idx=ti.Vector([])):
+    def set_torque(self, t, idx=()):
         if self.type[idx] == int(ObjType.DYNAMIC):
             self.torque[idx] = t
 
@@ -342,11 +351,11 @@ class RigidObjectField(object):
 @ti.data_oriented
 class Cube(RigidObjectField):
     """
-    A RigidObjectField with only one simple cube
+    A RigidObjectField with only some simple cubes
     """
 
     def __init__(self):
-        super().__init__(['./data/cube.off', './data/rect.off'], shape=(2,))
+        super().__init__(['./data/cube.off', './data/rect.off'])
         # set initial condition of simulation
         self.cur_step = 0
         self.t = 0.0
@@ -377,6 +386,55 @@ class Cube(RigidObjectField):
     def apply_gravity(self):
         for idx in ti.grouped(self.mass):
             self.apply_force(ti.Vector([0.0, 0.0, -g_const]) * self.get_mass(idx), self.get_position(idx), idx)
+
+    def step(self):
+        self.apply_gravity()
+        self.advance(self.dt)
+        self.update_meshes()
+        self.t += self.dt
+        self.cur_step += 1
+
+
+@ti.data_oriented
+class Ball(RigidObjectField):
+    """
+    A RigidObjectField with only balls
+    """
+    def __init__(self):
+        super().__init__(['./data/sphere.off'] * 3, [2.0, 3.0, 4.0])  # three balls with radius 2, 3 and 4
+        # set initial condition of simulation
+        self.cur_step = 0
+        self.t = 0.0
+        self.dt = time_delta
+        self.radius = ti.field(float, self.shape)
+        self.radius.from_numpy(self.scalings)
+        self._set_sim_init()
+        self.update_meshes()
+
+    @ti.kernel
+    def _set_sim_init(self):
+        # for i in range(3):
+        identity = ti.Matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        for I in ti.grouped(self.mass):
+            self.set_mass(20, I)
+            radius = self.radius[I]
+            self.set_inertia(self.get_mass(I) * 2.0 / 5.0 * radius * radius * identity, I)  # inertia of ball
+            self.set_position(ti.Vector([(0.2 + I[0] * 0.3) * boundary[0], 0.5 * boundary[1], 1.0 * boundary[2]]), I)
+
+        self.update_new_positions()
+
+    def reinitialize(self):
+        # reset non taichi-scope variables here
+        self.t = 0.0
+        self.cur_step = 0
+        self.reset_members()
+        self._set_sim_init()
+        self.update_meshes()
+
+    @ti.kernel
+    def apply_gravity(self):
+        for I in ti.grouped(self.mass):
+            self.apply_force(ti.Vector([0.0, 0.0, -g_const]) * self.get_mass(I), self.get_position(I), I)
 
     def step(self):
         self.apply_gravity()

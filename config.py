@@ -1,8 +1,8 @@
 import math
 
-device = 'cpu'
+device = 'gpu'
 
-screen_res = (800, 400, 400)  # z and y axis in the simulation are swapped for better visualization
+screen_res = (800, 400, 200)  # z and y axis in the simulation are swapped for better visualization
 screen_to_world_ratio = 10.0
 boundary = (screen_res[0] / screen_to_world_ratio,
             screen_res[2] / screen_to_world_ratio,
@@ -24,7 +24,7 @@ dim = 3
 bg_color = 0x112f41
 particle_color = 'velocity'
 boundary_color = 0xebaca2
-num_particles_x = 20
+num_particles_x = 40
 num_particles_y = 20
 num_particles_z = 20
 num_particles = num_particles_x * num_particles_y * num_particles_z
@@ -48,9 +48,14 @@ corrK = 0.001
 # corrN = 4.0
 neighbor_radius = h * 1.05  # TODO: need to change
 
+# SDF params
+sdf_inf = 1e6
+sdf_eps = 1e-3  # for normal computation
+
 # Collision params
 collision_eps = 0.2  # vrel+ / vrel-
-boundary_stiffness = 200  # for force based collision
+boundary_stiffness = 200  # for force based collision with boundaries
+rigid_stiffness = 200  # for force based collision with rigid bodies
 
 poly6_factor = 315.0 / 64.0 / math.pi
 spiky_grad_factor = -45.0 / math.pi

@@ -8,18 +8,19 @@ from matplotlib import cm
 
 from utils import *
 
-from rigidbody import RigidObjectField
+from rigidbody import Ball
 
 
 @ti.data_oriented
 class Fluid(object):
-    def __init__(self):
+    def __init__(self, rigid: Ball):
         self.dt = time_delta
         self.pbf_num_iters = pbf_num_iters
         self.xsph_c = xsph_c
         self.vorticity_epsilon = vorticity_epsilon
         self.collisions_eps = collision_eps
         self.boundary_stiffness = boundary_stiffness
+        self.rigid_stiffness = rigid_stiffness
         self.particle_color = particle_color
 
         self.old_positions = ti.Vector.field(dim, float)
@@ -37,6 +38,7 @@ class Fluid(object):
         self.position_deltas = ti.Vector.field(dim, float)
         # 0: x-pos, 1: timestep in sin()
         self.board_states = ti.Vector.field(2, float)
+
         ti.root.dense(ti.i, num_particles).place(self.old_positions, self.positions, self.velocities, self.forces, self.omegas, self.density)
         grid_snode = ti.root.dense(ti.ijk, grid_size)
         grid_snode.place(self.grid_num_particles)
@@ -48,14 +50,39 @@ class Fluid(object):
         ti.root.place(self.board_states)
 
         self.pcd = o3d.geometry.PointCloud()
+        self.rigid = rigid
 
         self.boundary_handled_by_collision = ti.field(int, shape=())
         self.boundary_handled_by_confinement = ti.field(int, shape=())
+        self.collisions_with_rigid = ti.field(int, shape=())
 
     @ti.kernel
     def clear_stats(self):
         self.boundary_handled_by_collision[None] = 0
         self.boundary_handled_by_confinement[None] = 0
+        self.collisions_with_rigid[None] = 0
+
+    @ti.func
+    def sdf(self, p):
+        """
+        Return the signed distance from the given point to the rigid body field
+        """
+        d = sdf_inf
+        for I in ti.grouped(self.rigid.pos):
+            d = min(d, (self.rigid.pos[I] - p).norm() - self.rigid.radius[I])
+        return d
+
+    @ti.func
+    def sdf_normal(self, p):
+        """
+        Return the normal vector at the surface of a rigid body by taking the numerical gradient of sdf. Not recommended though
+        """
+        s0 = self.sdf(p)
+        return (ti.Vector([
+            self.sdf(p + ti.Vector([sdf_eps, 0, 0])) - s0,
+            self.sdf(p + ti.Vector([0, sdf_eps, 0])) - s0,
+            self.sdf(p + ti.Vector([0, 0, sdf_eps])) - s0,
+        ]) / sdf_eps).normalized()
 
     @ti.func
     def confine_position_to_boundary(self, p):
@@ -139,6 +166,30 @@ class Fluid(object):
                 # add force according to Hooke's law
                 self.boundary_handled_by_collision[None] += 1
                 self.forces[i] += stiffness * dp
+
+    @ti.kernel
+    def add_rigid_body_collision_forces(self, stiffness: ti.f32):
+        """
+        Detect collisions with rigid bodies and add elastic force to velocities
+        """
+        # enumerate all rigid bodies, assume balls
+        # TODO: needs AABB speed up
+        for I in ti.grouped(self.rigid.pos):
+            center = self.rigid.pos[I]
+            radius = self.rigid.radius[I]
+            for p_i in range(num_particles):
+                pos = self.positions[p_i]
+                dp = pos - center
+                distance_to_center = dp.norm()
+                signed_distance_to_surface = distance_to_center - radius
+                if signed_distance_to_surface < 0:
+                    self.collisions_with_rigid[None] += 1
+                    # Handle collision
+                    normal = dp / distance_to_center
+                    force = stiffness * -signed_distance_to_surface * normal
+                    # Apply forces of equal magnitude but opposite direction to the particle and the ball
+                    self.forces[p_i] += force
+                    self.rigid.apply_force(-force, pos, I)
 
     @ti.kernel
     def move_board(self):
@@ -372,7 +423,9 @@ class Fluid(object):
         self.save_old_pos()
         self.clear_forces()
         self.add_gravity()
-        self.add_boundary_collision_forces(self.boundary_stiffness)  # regard collision as external forces
+        # regard collision as external forces
+        self.add_rigid_body_collision_forces(self.rigid_stiffness)
+        self.add_boundary_collision_forces(self.boundary_stiffness)
         self.apply_forces()
         self.update_position_from_velocity()
 
@@ -397,7 +450,7 @@ class Fluid(object):
             i_mod_x = i % num_particles_x
             offs = ti.Vector([(boundary[0] - delta * num_particles_x) * (0.0 if i_mod_x < num_particles_x // 2 else 0.9),
                               (boundary[1] - delta * num_particles_y) * 0.5,
-                              boundary[2] * 0.5])
+                              boundary[2] * 0.05])
             self.positions[i] = ti.Vector([i_mod_x, i_mod_xy // num_particles_x, i // num_particles_xy]) * delta + offs
             for c in ti.static(range(dim)):
                 self.velocities[i][c] = (ti.random() - 0.5) * 4
@@ -420,8 +473,9 @@ class Fluid(object):
         collision = self.boundary_handled_by_collision.to_numpy()
         confinement = self.boundary_handled_by_confinement.to_numpy()
         total_boundary = collision + confinement
-        print(f'  boundary handled by collision:   {collision / float(total_boundary) * 100:.2f}%')
-        print(f'  boundary handled by confinement: {confinement / float(total_boundary) * 100:.2f}%')
+        # print(f'  boundary handled by collision:   {collision / float(total_boundary) * 100:.2f}%')
+        # print(f'  boundary handled by confinement: {confinement / float(total_boundary) * 100:.2f}%')
+        print(f'  #collisions with rigid: {self.collisions_with_rigid.to_numpy()}')
         self.clear_stats()
 
     def update_point_cloud(self):
