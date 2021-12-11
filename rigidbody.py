@@ -402,7 +402,7 @@ class Ball(RigidObjectField):
     """
 
     def __init__(self):
-        super().__init__(['./data/sphere.off'] * 2, [2.0, 2.0])
+        super().__init__(['./data/sphere.off'] * 2, [2.0, 3.0])
         # set initial condition of simulation
         self.cur_step = 0
         self.t = 0.0
@@ -460,4 +460,3 @@ class Ball(RigidObjectField):
             ret[3 + i] = utils.clamp(utils.get_cell(aabb[3 + i]) + 1, 0, grid_size[i])
 
         return ret
-        # return ti.Vector([0, 0, 0, grid_size[0], grid_size[1], grid_size[2]], ti.i32)

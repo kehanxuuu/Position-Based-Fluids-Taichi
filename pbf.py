@@ -217,12 +217,11 @@ class Fluid(object):
                 self.rigid.apply_force_to_COM(rigid_stiffness * dp, I)
 
     @ti.kernel
-    def _add_rigid_body_collision_forces_aabb(self, rigid_idx: ti.template(), stiffness: ti.f32):
+    def _add_rigid_body_collision_forces(self, rigid_idx: ti.template(), stiffness: ti.f32):
         center = self.rigid.pos[rigid_idx]
         radius = self.rigid.radius[rigid_idx]
         aabb = self.rigid.get_AABB(rigid_idx)
-        collisions = 0
-        print(aabb, (aabb[3] - aabb[0]) * (aabb[4] - aabb[1]) * (aabb[5] - aabb[2]), 'particles')
+        # print(aabb, (aabb[3] - aabb[0]) * (aabb[4] - aabb[1]) * (aabb[5] - aabb[2]), 'particles')
         # Only iterate through particles in the AABB
         for g_idx in ti.grouped(ti.ndrange((aabb[0], aabb[3]), (aabb[1], aabb[4]), (aabb[2], aabb[5]))):
             for i in range(self.grid_num_particles[g_idx]):
@@ -232,7 +231,6 @@ class Fluid(object):
                 distance_to_center = dp.norm()
                 signed_distance_to_surface = distance_to_center - radius
                 if signed_distance_to_surface < 0:
-                    collisions += 1
                     self.collisions_with_rigid[None] += 1
                     # Handle collision
                     normal = dp / distance_to_center
@@ -240,39 +238,15 @@ class Fluid(object):
                     # Apply forces of equal magnitude but opposite direction to the particle and the ball
                     self.forces[p_i] += force
                     self.rigid.apply_force(-force, pos, rigid_idx)
-        print('collisions aabb:', collisions)
-
-    @ti.kernel
-    def _add_rigid_body_collision_forces(self, rigid_idx: ti.template(), stiffness: ti.f32):
-        center = self.rigid.pos[rigid_idx]
-        radius = self.rigid.radius[rigid_idx]
-        collisions = 0
-        for p_i in self.positions:
-            pos = self.positions[p_i]
-            dp = pos - center
-            distance_to_center = dp.norm()
-            signed_distance_to_surface = distance_to_center - radius
-            if signed_distance_to_surface < 0:
-                collisions += 1
-                self.collisions_with_rigid[None] += 1
-                # Handle collision
-                normal = dp / distance_to_center
-                force = stiffness * -signed_distance_to_surface * normal
-                # Apply forces of equal magnitude but opposite direction to the particle and the ball
-                self.forces[p_i] += force
-                self.rigid.apply_force(-force, pos, rigid_idx)
-        print('collisions full:', collisions)
 
     def add_rigid_body_collision_forces(self, stiffness: ti.f32):
         """
         Detect collisions with rigid bodies and add elastic force to velocities
         """
-        self.update_grid()
-        self._add_rigid_body_collision_forces((0), stiffness)
-        self._add_rigid_body_collision_forces_aabb((1), stiffness)
+        self.update_grid()  # todo: may comment this line for performance issue
         # enumerate all rigid bodies, assume balls
-        # for I in itertools.product(self.rigid.shape):
-        #     self._add_rigid_body_collision_forces(I, stiffness)
+        for I in itertools.product(*self.rigid.shape_ranges):
+            self._add_rigid_body_collision_forces(I, stiffness)
 
     @ti.kernel
     def move_board(self):
