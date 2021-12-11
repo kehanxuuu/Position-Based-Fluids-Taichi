@@ -3,7 +3,7 @@ import open3d as o3d
 import numpy as np
 import utils
 import itertools
-from config import time_delta, boundary, screen_to_world_ratio, g_const
+from config import time_delta, boundary, screen_to_world_ratio, g_const, grid_size
 
 
 @ti.data_oriented
@@ -400,8 +400,9 @@ class Ball(RigidObjectField):
     """
     A RigidObjectField with only balls
     """
+
     def __init__(self):
-        super().__init__(['./data/sphere.off'] * 3, [2.0, 3.0, 4.0])  # three balls with radius 2, 3 and 4
+        super().__init__(['./data/sphere.off'] * 2, [2.0, 2.0])
         # set initial condition of simulation
         self.cur_step = 0
         self.t = 0.0
@@ -417,7 +418,7 @@ class Ball(RigidObjectField):
         for I in ti.grouped(self.mass):
             self.set_mass(20, I)
             self.set_inertia(utils.inertia_ball(self.get_mass(I), self.radius[I]), I)  # inertia of ball
-            self.set_position(ti.Vector([(0.2 + I[0] * 0.3) * boundary[0], 0.5 * boundary[1], 0.7 * boundary[2]]), I)
+            self.set_position(ti.Vector([0.5 * boundary[0], (0.3 + 0.4 * I[0]) * boundary[1], 0.7 * boundary[2]]), I)
 
         self.update_new_positions()
 
@@ -440,3 +441,23 @@ class Ball(RigidObjectField):
         self.update_meshes()
         self.t += self.dt
         self.cur_step += 1
+
+    @ti.func
+    def get_AABB(self, idx):
+        """
+        Return the AABB represented by a shape (6,) vector - first three entries indicate bmin.xyz, last three bmax.xyz
+        The provided AABB is converted to grid indices with boundary checking
+        """
+        p = self.pos[idx]
+        r = self.radius[idx]
+
+        aabb = ti.Vector([p.x - r, p.y - r, p.z - r,
+                          p.x + r, p.y + r, p.z + r])
+        ret = ti.Vector([0, 0, 0, 0, 0, 0], ti.i32)
+
+        for i in ti.static(range(3)):
+            ret[i] = utils.clamp(utils.get_cell(aabb[i]), 0, grid_size[i])
+            ret[3 + i] = utils.clamp(utils.get_cell(aabb[3 + i]) + 1, 0, grid_size[i])
+
+        return ret
+        # return ti.Vector([0, 0, 0, grid_size[0], grid_size[1], grid_size[2]], ti.i32)

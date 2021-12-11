@@ -13,7 +13,7 @@ def render(vis, fluid: Fluid, rigid: RigidObjectField, box):
 
 
 def main():
-    ti.init(arch=ti.gpu if device == 'gpu' else ti.cpu)
+    ti.init(arch=ti.gpu if device == 'gpu' else ti.cpu, random_seed=0)
 
     # setup gui
     vis = o3d.visualization.VisualizerWithKeyCallback()

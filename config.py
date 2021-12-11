@@ -1,6 +1,6 @@
 import math
 
-device = 'gpu'
+device = 'cpu'
 
 screen_res = (800, 400, 200)  # z and y axis in the simulation are swapped for better visualization
 screen_to_world_ratio = 10.0

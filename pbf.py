@@ -9,6 +9,7 @@ from matplotlib import cm
 from utils import *
 
 from rigidbody import Ball
+import itertools
 
 
 @ti.data_oriented
@@ -216,28 +217,62 @@ class Fluid(object):
                 self.rigid.apply_force_to_COM(rigid_stiffness * dp, I)
 
     @ti.kernel
-    def add_rigid_body_collision_forces(self, stiffness: ti.f32):
-        """
-        Detect collisions with rigid bodies and add elastic force to velocities
-        """
-        # enumerate all rigid bodies, assume balls
-        # TODO: needs AABB speed up
-        for I in ti.grouped(self.rigid.pos):
-            center = self.rigid.pos[I]
-            radius = self.rigid.radius[I]
-            for p_i in range(num_particles):
+    def _add_rigid_body_collision_forces_aabb(self, rigid_idx: ti.template(), stiffness: ti.f32):
+        center = self.rigid.pos[rigid_idx]
+        radius = self.rigid.radius[rigid_idx]
+        aabb = self.rigid.get_AABB(rigid_idx)
+        collisions = 0
+        print(aabb, (aabb[3] - aabb[0]) * (aabb[4] - aabb[1]) * (aabb[5] - aabb[2]), 'particles')
+        # Only iterate through particles in the AABB
+        for g_idx in ti.grouped(ti.ndrange((aabb[0], aabb[3]), (aabb[1], aabb[4]), (aabb[2], aabb[5]))):
+            for i in range(self.grid_num_particles[g_idx]):
+                p_i = self.grid2particles[g_idx, i]
                 pos = self.positions[p_i]
                 dp = pos - center
                 distance_to_center = dp.norm()
                 signed_distance_to_surface = distance_to_center - radius
                 if signed_distance_to_surface < 0:
+                    collisions += 1
                     self.collisions_with_rigid[None] += 1
                     # Handle collision
                     normal = dp / distance_to_center
                     force = stiffness * -signed_distance_to_surface * normal
                     # Apply forces of equal magnitude but opposite direction to the particle and the ball
                     self.forces[p_i] += force
-                    self.rigid.apply_force(-force, pos, I)
+                    self.rigid.apply_force(-force, pos, rigid_idx)
+        print('collisions aabb:', collisions)
+
+    @ti.kernel
+    def _add_rigid_body_collision_forces(self, rigid_idx: ti.template(), stiffness: ti.f32):
+        center = self.rigid.pos[rigid_idx]
+        radius = self.rigid.radius[rigid_idx]
+        collisions = 0
+        for p_i in self.positions:
+            pos = self.positions[p_i]
+            dp = pos - center
+            distance_to_center = dp.norm()
+            signed_distance_to_surface = distance_to_center - radius
+            if signed_distance_to_surface < 0:
+                collisions += 1
+                self.collisions_with_rigid[None] += 1
+                # Handle collision
+                normal = dp / distance_to_center
+                force = stiffness * -signed_distance_to_surface * normal
+                # Apply forces of equal magnitude but opposite direction to the particle and the ball
+                self.forces[p_i] += force
+                self.rigid.apply_force(-force, pos, rigid_idx)
+        print('collisions full:', collisions)
+
+    def add_rigid_body_collision_forces(self, stiffness: ti.f32):
+        """
+        Detect collisions with rigid bodies and add elastic force to velocities
+        """
+        self.update_grid()
+        self._add_rigid_body_collision_forces((0), stiffness)
+        self._add_rigid_body_collision_forces_aabb((1), stiffness)
+        # enumerate all rigid bodies, assume balls
+        # for I in itertools.product(self.rigid.shape):
+        #     self._add_rigid_body_collision_forces(I, stiffness)
 
     @ti.kernel
     def move_board(self):
@@ -254,13 +289,9 @@ class Fluid(object):
         self.board_states[2] = t
 
     @ti.kernel
-    def find_neighbour(self):
-        # clear neighbor lookup table
+    def update_grid(self):
         for I in ti.grouped(self.grid_num_particles):
             self.grid_num_particles[I] = 0
-        for I in ti.grouped(self.particle_neighbors):
-            self.particle_neighbors[I] = -1
-
         # update grid
         for p_i in self.positions:
             cell = get_cell(self.positions[p_i])
@@ -268,6 +299,12 @@ class Fluid(object):
             # but we can directly use int Vectors as indices
             offs = ti.atomic_add(self.grid_num_particles[cell], 1)
             self.grid2particles[cell, offs] = p_i
+
+    @ti.kernel
+    def find_neighbour(self):
+        # clear neighbor lookup table
+        for I in ti.grouped(self.particle_neighbors):
+            self.particle_neighbors[I] = -1
         # find particle neighbors
         for p_i in self.positions:
             pos_i = self.positions[p_i]
@@ -476,6 +513,7 @@ class Fluid(object):
         self.update_position_from_velocity()
 
         # PBD Algorithm:
+        self.update_grid()
         self.find_neighbour()
         for _ in range(self.pbf_num_iters):
             self.substep()
