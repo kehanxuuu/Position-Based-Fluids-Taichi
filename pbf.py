@@ -39,7 +39,7 @@ class Fluid(object):
         self.lambdas = ti.field(float)
         self.position_deltas = ti.Vector.field(dim, float)
         # 0: x-pos, 1: timestep in sin()
-        self.board_states = ti.Vector.field(2, float)
+        self.board_states = ti.field(float, 4)  # x, v, t, w
 
         ti.root.dense(ti.i, num_particles).place(self.old_positions, self.positions, self.velocities, self.forces, self.omegas, self.density)
         grid_snode = ti.root.dense(ti.ijk, grid_size)
@@ -49,7 +49,6 @@ class Fluid(object):
         nb_node.place(self.particle_num_neighbors)
         nb_node.dense(ti.j, max_num_neighbors).place(self.particle_neighbors)
         ti.root.dense(ti.i, num_particles).place(self.lambdas, self.position_deltas, self.velocities_delta)
-        ti.root.place(self.board_states)
 
         self.pcd = o3d.geometry.PointCloud()
         self.rigid = rigid
@@ -92,7 +91,7 @@ class Fluid(object):
         Simply confine the position into the boundary, no collision response generated
         """
         bmin = particle_radius_in_world * 0.1
-        bmax = ti.Vector([self.board_states[None][0], boundary[1], boundary[2]]) - particle_radius_in_world * 0.1
+        bmax = ti.Vector([self.board_states[0], boundary[1], boundary[2]]) - particle_radius_in_world * 0.1
         has_confinement = 0
         for i in ti.static(range(dim)):
             # Use randomness to prevent particles from sticking into each other after clamping
@@ -112,7 +111,7 @@ class Fluid(object):
         Detect boundary collisions, confine positions, and add impulse to velocities
         """
         bmin = particle_radius_in_world
-        bmax = ti.Vector([self.board_states[None][0], boundary[1], boundary[2]]) - particle_radius_in_world
+        bmax = ti.Vector([self.board_states[0], boundary[1], boundary[2]]) - particle_radius_in_world
         for i in self.positions:
             pos = self.positions[i]
             has_collision = 0
@@ -129,7 +128,7 @@ class Fluid(object):
                     normal[j] = -1.0
                     has_collision = 1
                     if j == 0:  # hit the board
-                        v_boundary[j] = self.board_speed(self.board_states[None][1])
+                        v_boundary[j] = self.board_states[1]
 
             self.positions[i] = pos
             if has_collision >= 0.5:
@@ -143,7 +142,7 @@ class Fluid(object):
         for I in ti.grouped(self.rigid.pos):
             radius = self.rigid.radius[I]
             bmin = radius
-            bmax = ti.Vector([self.board_states[None][0], boundary[1], boundary[2]]) - radius
+            bmax = ti.Vector([self.board_states[0], boundary[1], boundary[2]]) - radius
             pos = self.rigid.pos[I]
             has_collision = 0
             normal = ti.Vector([0.0, 0.0, 0.0])  # from solid to liquid
@@ -159,7 +158,7 @@ class Fluid(object):
                     normal[j] = -1.0
                     has_collision = 1
                     if j == 0:  # hit the board
-                        v_boundary[j] = self.board_speed(self.board_states[None][1])
+                        v_boundary[j] = self.board_states[1]
 
             self.rigid.pos[I] = pos
             if has_collision >= 0.5:
@@ -175,7 +174,7 @@ class Fluid(object):
         Detect boundary collisions, and add elastic force to velocities
         """
         bmin = particle_radius_in_world
-        bmax = ti.Vector([self.board_states[None][0], boundary[1], boundary[2]]) - particle_radius_in_world
+        bmax = ti.Vector([self.board_states[0], boundary[1], boundary[2]]) - particle_radius_in_world
         for i in self.positions:
             pos = self.positions[i]
             has_collision = 0
@@ -198,7 +197,7 @@ class Fluid(object):
         for I in ti.grouped(self.rigid.pos):
             radius = self.rigid.radius[I]
             bmin = radius
-            bmax = ti.Vector([self.board_states[None][0], boundary[1], boundary[2]]) - radius
+            bmax = ti.Vector([self.board_states[0], boundary[1], boundary[2]]) - radius
             pos = self.rigid.pos[I]
             has_collision = 0
             dp = ti.Vector([0.0, 0.0, 0.0])  # stress from boundary to rigid
@@ -243,19 +242,16 @@ class Fluid(object):
     @ti.kernel
     def move_board(self):
         # probably more accurate to exert force on particles according to hooke's law.
-        b = self.board_states[None]
-        b[1] += 1.0
-        period = 90
-        if b[1] >= 2 * period:
-            b[1] = 0
-        b[0] += self.board_speed(b[1]) * self.dt
-        self.board_states[None] = b
-
-    @ti.func
-    def board_speed(self, t: ti.f32) -> ti.f32:
-        period = 90
-        vel_strength = 8.0
-        return -ti.sin(t * np.pi / period) * vel_strength
+        amplitude = 8
+        t = self.board_states[2]
+        w = self.board_states[3]
+        t += 1.0
+        if w * t > 2.0 * np.pi:
+            t -= 2.0 * np.pi / w
+        v = -amplitude * w * ti.sin(w * t)
+        self.board_states[0] += v * 1.0
+        self.board_states[1] = v
+        self.board_states[2] = t
 
     @ti.kernel
     def find_neighbour(self):
@@ -504,7 +500,15 @@ class Fluid(object):
             self.positions[i] = ti.Vector([i_mod_x, i_mod_xy // num_particles_x, i // num_particles_xy]) * delta + offs
             for c in ti.static(range(dim)):
                 self.velocities[i][c] = (ti.random() - 0.5) * 4
-        self.board_states[None] = ti.Vector([boundary[0] - epsilon, -0.0])
+
+        self.board_states[0] = boundary[0] - epsilon  # x
+        self.board_states[1] = 0.0  # v
+        self.board_states[2] = 0.0  # t
+        self.board_states[3] = 0.05  # w
+
+    @ti.kernel
+    def adjust_board_omega(self, factor: ti.f32):
+        self.board_states[3] *= factor
 
     def print_stats(self, time_interval):
         print('PBF stats:')

@@ -6,7 +6,7 @@ from rigidbody import *
 
 def render(vis, fluid: Fluid, rigid: RigidObjectField, box):
     vis.update_geometry(fluid.pcd)
-    box.translate(np.array([fluid.board_states[None][0], boundary[2] / 2, boundary[1] / 2]) * screen_to_world_ratio, relative=False)
+    box.translate(np.array([fluid.board_states[0], boundary[2] / 2, boundary[1] / 2]) * screen_to_world_ratio, relative=False)
     vis.update_geometry(box)
     for mesh in rigid.meshes.ravel():
         vis.update_geometry(mesh)
@@ -71,6 +71,12 @@ def main():
     def decreaseStiffness(_):
         fluid.rigid_boundary_stiffness /= 2
 
+    def increaseBoardOmega(_):
+        fluid.adjust_board_omega(1.1)
+
+    def decreaseBoardOmega(_):
+        fluid.adjust_board_omega(1.0 / 1.1)
+
     def make_particle_color_callback(color: str):
         def callback(_):
             fluid.particle_color = color
@@ -84,6 +90,8 @@ def main():
     vis.register_key_callback(ord("S"), decreaseViscosity)
     vis.register_key_callback(ord("2"), increaseStiffness)
     vis.register_key_callback(ord("1"), decreaseStiffness)
+    vis.register_key_callback(ord("4"), increaseBoardOmega)
+    vis.register_key_callback(ord("3"), decreaseBoardOmega)
     vis.register_key_callback(ord("5"), make_particle_color_callback('velocity'))
     vis.register_key_callback(ord("6"), make_particle_color_callback('density'))
     vis.register_key_callback(ord("7"), make_particle_color_callback('vorticity'))
