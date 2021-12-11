@@ -9,6 +9,16 @@ def lerp(t, a, b):
 
 
 @ti.func
+def clamp(x, min, max):
+    ret = x
+    if x < min:
+        ret = min
+    elif x > max:
+        ret = max
+    return ret
+
+
+@ti.func
 def poly6_value(s, h):
     result = 0.0
     if 0 <= s and s < h:
@@ -109,3 +119,46 @@ def matrix_to_quaternion(M):
 def quaternion_inverse(q):
     qInv = ti.Vector([-q.x, -q.y, -q.z, q.w]) / q.norm()
     return qInv
+
+
+@ti.func
+def identity_mat():
+    return ti.Matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+
+
+@ti.func
+def inertia_ball(m, r):
+    return 2 / 5 * m * r * r * identity_mat()
+
+
+@ti.func
+def inertia_torus(m, R, rho):
+    """
+    Torus defined by: z^2 + (sqrt(x^2 + y^2) - rho)^2 <= R^2
+    """
+    Ixy = 1 / 8 * m * (5 * R * R + 4 * rho * rho)
+    Iz = 1 / 4 * m * (3 * R * R + 4 * rho * rho)
+    return ti.Matrix([
+        [Ixy, 0, 0],
+        [0, Ixy, 0],
+        [0, 0, Iz]
+    ])
+
+
+@ti.func
+def smoothen(x, c):
+    return clamp(abs(x) / c, 0, 1) * x
+    # return x
+
+
+@ti.func
+def velocity_after_colliding_boundary(v_before, v_boundary, normal, eps):
+    vrel_before = v_before - v_boundary
+    vrel_before_orth_magnitude = vrel_before.dot(normal)
+    vrel_before_orth = vrel_before_orth_magnitude * normal
+    vrel_before_para = vrel_before - vrel_before_orth
+    # to prevent infinite bouncing caused by discrete time integration, we introduce a smoothening operation
+    # which curves down vrel_before_orth's magnitude to zero when it's small
+    # acts like an extra damping when |vrel| is small
+    vrel_after = vrel_before_para - eps * smoothen(vrel_before_orth_magnitude, smoothen_controller) * normal
+    return vrel_after + v_boundary

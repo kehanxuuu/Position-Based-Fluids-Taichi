@@ -18,9 +18,11 @@ class Fluid(object):
         self.pbf_num_iters = pbf_num_iters
         self.xsph_c = xsph_c
         self.vorticity_epsilon = vorticity_epsilon
-        self.collisions_eps = collision_eps
-        self.boundary_stiffness = boundary_stiffness
-        self.rigid_stiffness = rigid_stiffness
+        self.particle_boundary_eps = particle_boundary_eps
+        self.rigid_boundary_eps = rigid_boundary_eps
+        self.particle_boundary_stiffness = particle_boundary_stiffness
+        self.particle_rigid_stiffness = particle_rigid_stiffness
+        self.rigid_boundary_stiffness = rigid_boundary_stiffness
         self.particle_color = particle_color
 
         self.old_positions = ti.Vector.field(dim, float)
@@ -105,7 +107,7 @@ class Fluid(object):
         return p
 
     @ti.kernel
-    def add_boundary_collision_impulses(self, eps: ti.f32):
+    def add_boundary_collision_impulses(self, particle_eps: ti.f32, rigid_eps: ti.f32):
         """
         Detect boundary collisions, confine positions, and add impulse to velocities
         """
@@ -119,7 +121,6 @@ class Fluid(object):
             for j in ti.static(range(dim)):
                 # Use randomness to prevent particles from sticking into each other after clamping
                 if pos[j] <= bmin:
-
                     pos[j] = bmin + epsilon * ti.random()
                     normal[j] = 1.0
                     has_collision = 1
@@ -135,15 +136,41 @@ class Fluid(object):
                 # add impulse from boundary to velocity
                 self.boundary_handled_by_collision[None] += 1
                 normal = normal.normalized()
-                vel = self.velocities[i]
-                vrel_before = vel - v_boundary
-                vrel_before_orth = vrel_before.dot(normal) * normal
-                vrel_before_para = vrel_before - vrel_before_orth
-                vrel_after = vrel_before_para + -eps * vrel_before_orth
-                self.velocities[i] = vrel_after + v_boundary
+                v_before = self.velocities[i]
+                self.velocities[i] = velocity_after_colliding_boundary(v_before, v_boundary, normal, particle_eps)
+
+        # Also handle the collisions between the rigid bodies and the boundaries
+        for I in ti.grouped(self.rigid.pos):
+            radius = self.rigid.radius[I]
+            bmin = radius
+            bmax = ti.Vector([self.board_states[None][0], boundary[1], boundary[2]]) - radius
+            pos = self.rigid.pos[I]
+            has_collision = 0
+            normal = ti.Vector([0.0, 0.0, 0.0])  # from solid to liquid
+            v_boundary = ti.Vector([0.0, 0.0, 0.0])
+            for j in ti.static(range(dim)):
+                # Use randomness to prevent particles from sticking into each other after clamping
+                if pos[j] <= bmin:
+                    pos[j] = bmin
+                    normal[j] = 1.0
+                    has_collision = 1
+                elif bmax[j] <= pos[j]:
+                    pos[j] = bmax[j]
+                    normal[j] = -1.0
+                    has_collision = 1
+                    if j == 0:  # hit the board
+                        v_boundary[j] = self.board_speed(self.board_states[None][1])
+
+            self.rigid.pos[I] = pos
+            if has_collision >= 0.5:
+                # add impulse from boundary to velocity
+                self.boundary_handled_by_collision[None] += 1
+                normal = normal.normalized()
+                v_before = self.rigid.v[I]
+                self.rigid.v[I] = velocity_after_colliding_boundary(v_before, v_boundary, normal, rigid_eps)
 
     @ti.kernel
-    def add_boundary_collision_forces(self, stiffness: ti.f32):
+    def add_boundary_collision_forces(self, particle_stiffness: ti.f32, rigid_stiffness: ti.f32):
         """
         Detect boundary collisions, and add elastic force to velocities
         """
@@ -165,7 +192,29 @@ class Fluid(object):
             if has_collision >= 0.5:
                 # add force according to Hooke's law
                 self.boundary_handled_by_collision[None] += 1
-                self.forces[i] += stiffness * dp
+                self.forces[i] += particle_stiffness * dp
+
+        # Also handle the collisions between the rigid bodies and the boundaries
+        for I in ti.grouped(self.rigid.pos):
+            radius = self.rigid.radius[I]
+            bmin = radius
+            bmax = ti.Vector([self.board_states[None][0], boundary[1], boundary[2]]) - radius
+            pos = self.rigid.pos[I]
+            has_collision = 0
+            dp = ti.Vector([0.0, 0.0, 0.0])  # stress from boundary to rigid
+            for j in ti.static(range(dim)):
+                # Use randomness to prevent particles from sticking into each other after clamping
+                if pos[j] <= bmin:
+                    dp[j] = bmin - pos[j]
+                    has_collision = 1
+                elif bmax[j] <= pos[j]:
+                    dp[j] = bmax[j] - pos[j]
+                    has_collision = 1
+
+            if has_collision >= 0.5:
+                # add force according to Hooke's law
+                self.boundary_handled_by_collision[None] += 1
+                self.rigid.apply_force_to_COM(rigid_stiffness * dp, I)
 
     @ti.kernel
     def add_rigid_body_collision_forces(self, stiffness: ti.f32):
@@ -424,9 +473,10 @@ class Fluid(object):
         self.clear_forces()
         self.add_gravity()
         # regard collision as external forces
-        self.add_rigid_body_collision_forces(self.rigid_stiffness)
-        self.add_boundary_collision_forces(self.boundary_stiffness)
+        self.add_rigid_body_collision_forces(self.particle_rigid_stiffness)
+        # self.add_boundary_collision_forces(self.particle_boundary_stiffness, self.rigid_boundary_stiffness)
         self.apply_forces()
+        self.add_boundary_collision_impulses(self.particle_boundary_eps, self.rigid_boundary_eps)
         self.update_position_from_velocity()
 
         # PBD Algorithm:
@@ -467,14 +517,14 @@ class Fluid(object):
         print(f'  fps: {1 / time_interval:.2f}')
         print(f'  vorticity_epsilon value: {self.vorticity_epsilon:.5f}')
         print(f'  xsph_c value: {self.xsph_c:.5f}')
-        print(f'  {self.boundary_stiffness = :.2e}')
+        print(f'  {self.rigid_boundary_stiffness = :.2e}')
         density_np = self.density.to_numpy()
         print(f'  {density_np.min()=}, {density_np.max()=}, {density_np.mean()=}')
         collision = self.boundary_handled_by_collision.to_numpy()
         confinement = self.boundary_handled_by_confinement.to_numpy()
         total_boundary = collision + confinement
-        # print(f'  boundary handled by collision:   {collision / float(total_boundary) * 100:.2f}%')
-        # print(f'  boundary handled by confinement: {confinement / float(total_boundary) * 100:.2f}%')
+        print(f'  boundary handled by collision:   {collision / float(total_boundary) * 100:.2f}%')
+        print(f'  boundary handled by confinement: {confinement / float(total_boundary) * 100:.2f}%')
         print(f'  #collisions with rigid: {self.collisions_with_rigid.to_numpy()}')
         self.clear_stats()
 

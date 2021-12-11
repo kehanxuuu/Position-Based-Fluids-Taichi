@@ -22,7 +22,7 @@ def main():
     class GUIState:
         def __init__(self):
             self.reset = False
-            self.paused = True
+            self.paused = False
 
     control = GUIState()
 
@@ -59,17 +59,17 @@ def main():
         fluid.xsph_c = max(0, fluid.xsph_c)
 
     def increaseCollisionEps(_):
-        fluid.collisions_eps += 0.1
+        fluid.particle_collision_eps += 0.1
 
     def decreaseCollisionEps(_):
-        fluid.collisions_eps -= 0.1
-        fluid.collisions_eps = max(0, fluid.collisions_eps)
+        fluid.particle_collision_eps -= 0.1
+        fluid.particle_collision_eps = max(0, fluid.particle_collision_eps)
 
     def increaseStiffness(_):
-        fluid.boundary_stiffness *= 3
+        fluid.rigid_boundary_stiffness *= 2
 
     def decreaseStiffness(_):
-        fluid.boundary_stiffness /= 3
+        fluid.rigid_boundary_stiffness /= 2
 
     def make_particle_color_callback(color: str):
         def callback(_):

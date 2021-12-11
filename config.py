@@ -53,12 +53,17 @@ sdf_inf = 1e6
 sdf_eps = 1e-3  # for normal computation
 
 # Collision params
-collision_eps = 0.2  # vrel+ / vrel-
-boundary_stiffness = 200  # for force based collision with boundaries
-rigid_stiffness = 200  # for force based collision with rigid bodies
+particle_boundary_eps = 0.2  # vrel+ / vrel-
+particle_rigid_eps = 0.5
+rigid_boundary_eps = 0.5
+particle_boundary_stiffness = 200  # for force based collision with boundaries
+rigid_boundary_stiffness = 3e3
+particle_rigid_stiffness = 600  # for force based collision between particle and rigid bodies
 
 poly6_factor = 315.0 / 64.0 / math.pi
 spiky_grad_factor = -45.0 / math.pi
 
 vorticity_epsilon = 0.0
 xsph_c = 0.0
+
+smoothen_controller = 1 / 2 * g_const * time_delta * time_delta * 2.0  # see utils.smoothen and utils.velocity_after_colliding_boundary

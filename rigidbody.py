@@ -414,12 +414,10 @@ class Ball(RigidObjectField):
     @ti.kernel
     def _set_sim_init(self):
         # for i in range(3):
-        identity = ti.Matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
         for I in ti.grouped(self.mass):
             self.set_mass(20, I)
-            radius = self.radius[I]
-            self.set_inertia(self.get_mass(I) * 2.0 / 5.0 * radius * radius * identity, I)  # inertia of ball
-            self.set_position(ti.Vector([(0.2 + I[0] * 0.3) * boundary[0], 0.5 * boundary[1], 1.0 * boundary[2]]), I)
+            self.set_inertia(utils.inertia_ball(self.get_mass(I), self.radius[I]), I)  # inertia of ball
+            self.set_position(ti.Vector([(0.2 + I[0] * 0.3) * boundary[0], 0.5 * boundary[1], 0.7 * boundary[2]]), I)
 
         self.update_new_positions()
 
