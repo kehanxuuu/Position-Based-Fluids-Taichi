@@ -147,8 +147,8 @@ def inertia_torus(m, R, rho):
 
 @ti.func
 def smoothen(x, c):
-    return clamp(abs(x) / c, 0, 1) * x
-    # return x
+    # return clamp(abs(x) / c, 0, 1) * x
+    return x
 
 
 @ti.func
@@ -162,3 +162,13 @@ def velocity_after_colliding_boundary(v_before, v_boundary, normal, eps):
     # acts like an extra damping when |vrel| is small
     vrel_after = vrel_before_para - eps * smoothen(vrel_before_orth_magnitude, smoothen_controller) * normal
     return vrel_after + v_boundary
+
+@ti.func
+def sphere_collide_sphere(m1, m2, v1, v2, normal, eps):
+    v1_before_orth = v1.dot(normal)
+    v2_before_orth = v2.dot(normal)
+    v1_after_orth = ((m1 - eps * m2) * v1 + (1 + eps) * m2 * v2) / (m1 + m2)
+    v2_after_orth = ((m2 - eps * m1) * v2 + (1 + eps) * m1 * v1) / (m1 + m2)
+    v1_after = (v1_after_orth - v1_before_orth) * normal + v1
+    v2_after = (v2_after_orth - v2_before_orth) * normal + v2
+    return v1_after, v2_after

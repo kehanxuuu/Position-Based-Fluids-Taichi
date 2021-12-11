@@ -3,7 +3,7 @@ import open3d as o3d
 import numpy as np
 import utils
 import itertools
-from config import time_delta, boundary, screen_to_world_ratio, g_const, grid_size
+from config import time_delta, boundary, screen_to_world_ratio, g_const, grid_size, rigid_rigid_eps, epsilon
 
 
 @ti.data_oriented
@@ -402,13 +402,21 @@ class Ball(RigidObjectField):
     """
 
     def __init__(self):
-        super().__init__(['./data/sphere.off'] * 2, [2.0, 3.0])
+        N = 30
+        super().__init__(['./data/sphere.off'] * N, 1 + 3 * np.random.random((N,)))
         # set initial condition of simulation
+        self.eps = rigid_rigid_eps
         self.cur_step = 0
         self.t = 0.0
         self.dt = time_delta
         self.radius = ti.field(float, self.shape)
+        print('radius:', self.scalings)
         self.radius.from_numpy(self.scalings)
+        self.has_collision_update = ti.field(int, self.shape)
+        self.num_collisions = ti.field(int, ())
+        self.energy = ti.field(float, ())
+        self.p_after_collision = ti.Vector.field(3, float, self.shape)
+        self.v_after_collision = ti.Vector.field(3, float, self.shape)
         self._set_sim_init()
         self.update_meshes()
 
@@ -416,9 +424,16 @@ class Ball(RigidObjectField):
     def _set_sim_init(self):
         # for i in range(3):
         for I in ti.grouped(self.mass):
-            self.set_mass(20, I)
+            self.set_mass(100 * self.radius[I], I)
             self.set_inertia(utils.inertia_ball(self.get_mass(I), self.radius[I]), I)  # inertia of ball
-            self.set_position(ti.Vector([0.5 * boundary[0], (0.3 + 0.4 * I[0]) * boundary[1], 0.7 * boundary[2]]), I)
+            self.set_position(ti.Vector([
+                (0.2 + 0.6 * ti.random()) * boundary[0],
+                (0.2 + 0.6 * ti.random()) * boundary[1],
+                (0.4 + 0.2 * ti.random()) * boundary[2]
+            ]), I)
+            v = 20.0 * ti.random()
+            phi = 2 * np.pi * ti.random()
+            self.set_linear_velocity(ti.Vector([v * ti.cos(phi), v * ti.sin(phi), 0]), I)
 
         self.update_new_positions()
 
@@ -435,12 +450,65 @@ class Ball(RigidObjectField):
         for I in ti.grouped(self.mass):
             self.apply_force(ti.Vector([0.0, 0.0, -g_const]) * self.get_mass(I), self.get_position(I), I)
 
+    @ti.kernel
+    def detect_collision(self, eps: ti.f32):
+        self.num_collisions[None] = 0
+        for I in ti.grouped(self.has_collision_update):
+            self.has_collision_update[I] = 0
+
+        # for i, j in ti.ndrange(*(self.shape * 2)):
+        #     if j == i:
+        #         continue
+        #     I = (i,)
+        #     J = (j,)
+        for I in ti.grouped(ti.ndrange(*self.shape)):
+            for J in ti.grouped(ti.ndrange(*self.shape)):
+                if all(I == J): continue
+                mi = self.get_mass(I)
+                mj = self.get_mass(J)
+                ci = self.get_position(I)
+                cj = self.get_position(J)
+                ri = self.radius[I]
+                rj = self.radius[J]
+                cij = ci - cj
+                dis = cij.norm()
+                if dis < ri + rj:
+                    # Perform sphere-sphere collision
+                    self.num_collisions[None] += 1
+                    self.has_collision_update[I] = 1
+                    # self.has_collision_update[J] = 1
+                    normal = cij / dis  # points from j to i
+                    vi = self.get_linear_velocity(I)
+                    vj = self.get_linear_velocity(J)
+                    vi, vj = utils.sphere_collide_sphere(mi, mj, vi, vj, normal, eps)
+                    self.v_after_collision[I] = vi
+                    # self.v_after_collision[J] = vj
+                    intersection = ri + rj - dis + epsilon
+                    self.p_after_collision[I] = ci + intersection / 2 * normal
+                    # self.p_after_collision[J] = cj - intersection / 2 * normal
+
+        for I in ti.grouped(self.pos):
+            if self.has_collision_update[I]:
+                self.set_position(self.p_after_collision[I], I)
+                self.set_linear_velocity(self.v_after_collision[I], I)
+
+    @ti.kernel
+    def compute_energy(self):
+        self.energy[None] = 0
+        for I in ti.grouped(self.mass):
+            self.energy[None] += 0.5 * self.mass[I] * self.v[I].norm_sqr() + self.mass[I] * g_const * self.pos[I].z
+
     def step(self):
         self.apply_gravity()
+        self.detect_collision(self.eps)
         self.advance(self.dt)
+        self.compute_energy()
         self.update_meshes()
         self.t += self.dt
         self.cur_step += 1
+        collisions = self.num_collisions.to_numpy()
+        if collisions > 0:
+            print('# collisions:', collisions, '  energy:', self.energy.to_numpy())
 
     @ti.func
     def get_AABB(self, idx):

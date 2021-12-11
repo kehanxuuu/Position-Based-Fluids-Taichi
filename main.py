@@ -59,11 +59,12 @@ def main():
         fluid.xsph_c = max(0, fluid.xsph_c)
 
     def increaseCollisionEps(_):
-        fluid.particle_collision_eps += 0.1
+        fluid.rigid_boundary_eps += 0.1
+        rigid.eps += 0.1
 
     def decreaseCollisionEps(_):
-        fluid.particle_collision_eps -= 0.1
-        fluid.particle_collision_eps = max(0, fluid.particle_collision_eps)
+        fluid.rigid_boundary_eps = max(fluid.rigid_boundary_eps - 0.1, 0)
+        rigid.eps = max(rigid.eps - 0.1, 0)
 
     def increaseStiffness(_):
         fluid.rigid_boundary_stiffness *= 2
@@ -80,6 +81,7 @@ def main():
     def make_particle_color_callback(color: str):
         def callback(_):
             fluid.particle_color = color
+
         return callback
 
     vis.register_key_callback(ord("R"), resetSimulation)
@@ -88,8 +90,8 @@ def main():
     vis.register_key_callback(ord("D"), decreaseVorticity)
     vis.register_key_callback(ord("W"), increaseViscosity)
     vis.register_key_callback(ord("S"), decreaseViscosity)
-    vis.register_key_callback(ord("2"), increaseStiffness)
-    vis.register_key_callback(ord("1"), decreaseStiffness)
+    vis.register_key_callback(ord("2"), increaseCollisionEps)
+    vis.register_key_callback(ord("1"), decreaseCollisionEps)
     vis.register_key_callback(ord("4"), increaseBoardOmega)
     vis.register_key_callback(ord("3"), decreaseBoardOmega)
     vis.register_key_callback(ord("5"), make_particle_color_callback('velocity'))

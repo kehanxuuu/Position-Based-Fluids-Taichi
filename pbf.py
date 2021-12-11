@@ -102,7 +102,7 @@ class Fluid(object):
             elif bmax[i] <= p[i]:
                 p[i] = bmax[i] - epsilon * ti.random()
                 has_confinement = 1
-        if has_confinement >= 0.5:
+        if has_confinement:
             self.boundary_handled_by_confinement[None] += 1
         return p
 
@@ -132,7 +132,7 @@ class Fluid(object):
                         v_boundary[j] = self.board_states[1]
 
             self.positions[i] = pos
-            if has_collision >= 0.5:
+            if has_collision:
                 # add impulse from boundary to velocity
                 self.boundary_handled_by_collision[None] += 1
                 normal = normal.normalized()
@@ -162,7 +162,7 @@ class Fluid(object):
                         v_boundary[j] = self.board_states[1]
 
             self.rigid.pos[I] = pos
-            if has_collision >= 0.5:
+            if has_collision:
                 # add impulse from boundary to velocity
                 self.boundary_handled_by_collision[None] += 1
                 normal = normal.normalized()
@@ -189,7 +189,7 @@ class Fluid(object):
                     dp[j] = bmax[j] - pos[j]
                     has_collision = 1
 
-            if has_collision >= 0.5:
+            if has_collision:
                 # add force according to Hooke's law
                 self.boundary_handled_by_collision[None] += 1
                 self.forces[i] += particle_stiffness * dp
@@ -211,7 +211,7 @@ class Fluid(object):
                     dp[j] = bmax[j] - pos[j]
                     has_collision = 1
 
-            if has_collision >= 0.5:
+            if has_collision:
                 # add force according to Hooke's law
                 self.boundary_handled_by_collision[None] += 1
                 self.rigid.apply_force_to_COM(rigid_stiffness * dp, I)
@@ -251,7 +251,7 @@ class Fluid(object):
     @ti.kernel
     def move_board(self):
         # probably more accurate to exert force on particles according to hooke's law.
-        amplitude = 8
+        amplitude = 0
         t = self.board_states[2]
         w = self.board_states[3]
         t += 1.0
@@ -533,7 +533,7 @@ class Fluid(object):
         print(f'  fps: {1 / time_interval:.2f}')
         print(f'  vorticity_epsilon value: {self.vorticity_epsilon:.5f}')
         print(f'  xsph_c value: {self.xsph_c:.5f}')
-        print(f'  {self.rigid_boundary_stiffness = :.2e}')
+        print(f'  {self.rigid_boundary_eps = :.2e}')
         density_np = self.density.to_numpy()
         print(f'  {density_np.min()=}, {density_np.max()=}, {density_np.mean()=}')
         collision = self.boundary_handled_by_collision.to_numpy()
