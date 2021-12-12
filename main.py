@@ -26,7 +26,7 @@ def main():
 
     control = GUIState()
 
-    rigid = Ball()
+    rigid = SimpleGeometryRigid(n_balls=3, n_toruses=3)
     for mesh in rigid.meshes.ravel():
         vis.add_geometry(mesh)
 

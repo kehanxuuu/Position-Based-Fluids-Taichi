@@ -8,13 +8,13 @@ from matplotlib import cm
 
 from utils import *
 
-from rigidbody import Ball
+from rigidbody import SimpleGeometryRigid
 import itertools
 
 
 @ti.data_oriented
 class Fluid(object):
-    def __init__(self, rigid: Ball):
+    def __init__(self, rigid: SimpleGeometryRigid):
         self.dt = time_delta
         self.pbf_num_iters = pbf_num_iters
         self.xsph_c = xsph_c
@@ -218,22 +218,17 @@ class Fluid(object):
 
     @ti.kernel
     def _add_rigid_body_collision_forces(self, rigid_idx: ti.template(), stiffness: ti.f32):
-        center = self.rigid.pos[rigid_idx]
-        radius = self.rigid.radius[rigid_idx]
         aabb = self.rigid.get_AABB(rigid_idx)
         # print(aabb, (aabb[3] - aabb[0]) * (aabb[4] - aabb[1]) * (aabb[5] - aabb[2]), 'particles')
         # Only iterate through particles in the AABB
         for g_idx in ti.grouped(ti.ndrange((aabb[0], aabb[3]), (aabb[1], aabb[4]), (aabb[2], aabb[5]))):
             for i in range(self.grid_num_particles[g_idx]):
-                p_i = self.grid2particles[g_idx, i]
+                p_i = self.grid2particles[g_idx, i]  # particle index
                 pos = self.positions[p_i]
-                dp = pos - center
-                distance_to_center = dp.norm()
-                signed_distance_to_surface = distance_to_center - radius
+                signed_distance_to_surface, normal = self.rigid.get_sdf_normal(rigid_idx, pos)
                 if signed_distance_to_surface < 0:
                     self.collisions_with_rigid[None] += 1
                     # Handle collision
-                    normal = dp / distance_to_center
                     force = stiffness * -signed_distance_to_surface * normal
                     # Apply forces of equal magnitude but opposite direction to the particle and the ball
                     self.forces[p_i] += force
@@ -251,7 +246,7 @@ class Fluid(object):
     @ti.kernel
     def move_board(self):
         # probably more accurate to exert force on particles according to hooke's law.
-        amplitude = 0
+        amplitude = 10
         t = self.board_states[2]
         w = self.board_states[3]
         t += 1.0

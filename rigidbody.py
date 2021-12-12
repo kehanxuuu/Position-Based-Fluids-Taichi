@@ -3,7 +3,7 @@ import open3d as o3d
 import numpy as np
 import utils
 import itertools
-from config import time_delta, boundary, screen_to_world_ratio, g_const, grid_size, rigid_rigid_eps, epsilon
+from config import *
 
 
 @ti.data_oriented
@@ -396,41 +396,57 @@ class Cube(RigidObjectField):
 
 
 @ti.data_oriented
-class Ball(RigidObjectField):
+class SimpleGeometryRigid(RigidObjectField):
     """
-    A RigidObjectField with only balls
+    A RigidObjectField with only balls or toruses
     """
 
-    def __init__(self):
-        N = 30
-        super().__init__(['./data/sphere.off'] * N, 1 + 3 * np.random.random((N,)))
-        # set initial condition of simulation
+    def __init__(self, n_balls, n_toruses):
+        """
+        Initialize a rigid body field with balls and toruses with random sizes and positions
+        """
+        super().__init__(['./data/sphere.off'] * n_balls + ['./data/torus.off'] * n_toruses, 1 + 3 * np.random.random((n_balls + n_toruses,)))
+        self.n_balls = n_balls
+        self.n_toruses = n_toruses
+
+        # Set initial condition of simulation
         self.eps = rigid_rigid_eps
         self.cur_step = 0
         self.t = 0.0
         self.dt = time_delta
+
+        # Bounding sphere radius
         self.radius = ti.field(float, self.shape)
-        print('radius:', self.scalings)
-        self.radius.from_numpy(self.scalings)
+        bounding_sphere_radius = self.scalings.copy()
+        bounding_sphere_radius[:n_balls] *= template_ball_radius
+        bounding_sphere_radius[n_balls:] *= template_torus_R + template_torus_r
+        self.radius.from_numpy(bounding_sphere_radius)
+
+        # Fields for collision
         self.has_collision_update = ti.field(int, self.shape)
         self.num_collisions = ti.field(int, ())
         self.energy = ti.field(float, ())
         self.p_after_collision = ti.Vector.field(3, float, self.shape)
         self.v_after_collision = ti.Vector.field(3, float, self.shape)
+
         self._set_sim_init()
         self.update_meshes()
 
     @ti.kernel
     def _set_sim_init(self):
-        # for i in range(3):
         for I in ti.grouped(self.mass):
-            self.set_mass(100 * self.radius[I], I)
-            self.set_inertia(utils.inertia_ball(self.get_mass(I), self.radius[I]), I)  # inertia of ball
+            self.set_mass(10 * self.radius[I], I)
+            if I[0] < self.n_balls:
+                self.set_inertia(utils.inertia_ball(self.get_mass(I), self.radius[I]), I)
+            else:
+                scale = self.radius[I] / (template_torus_R + template_torus_r)
+                self.set_inertia(utils.inertia_torus(self.get_mass(I), template_torus_R * scale, template_torus_r * scale), I)
             self.set_position(ti.Vector([
                 (0.2 + 0.6 * ti.random()) * boundary[0],
                 (0.2 + 0.6 * ti.random()) * boundary[1],
-                (0.4 + 0.2 * ti.random()) * boundary[2]
+                (0.6 + 0.2 * ti.random()) * boundary[2]
             ]), I)
+            # Set random velocity
             v = 20.0 * ti.random()
             phi = 2 * np.pi * ti.random()
             self.set_linear_velocity(ti.Vector([v * ti.cos(phi), v * ti.sin(phi), 0]), I)
@@ -450,8 +466,36 @@ class Ball(RigidObjectField):
         for I in ti.grouped(self.mass):
             self.apply_force(ti.Vector([0.0, 0.0, -g_const]) * self.get_mass(I), self.get_position(I), I)
 
+    @ti.func
+    def get_sdf_normal(self, idx, pos):
+        """
+        Compute the sdf and normal(towards exterior) at world coordinate pos
+        """
+        # Torus case
+        sd_surface = 0.0
+        normal = ti.Vector([0.0, 0.0, 0.0])
+        if idx[0] < self.n_balls:
+            # Ball case
+            center = self.pos[idx]
+            radius = self.radius[idx]
+            sd_surface, normal = utils.get_sphere_sdf_normal(center, radius, pos)
+        else:
+            # Torus case
+            rotation = self.rot[idx]
+            pos_local = rotation.inverse() @ (pos - self.pos[idx])
+            scale = self.radius[idx] / (template_torus_R + template_torus_r)
+            R = template_torus_R * scale
+            r = template_torus_r * scale
+            sd_surface, normal_local = utils.get_torus_sdf_normal(R, r, pos_local)
+            normal = rotation @ normal_local
+        return sd_surface, normal
+
     @ti.kernel
     def detect_collision(self, eps: ti.f32):
+        """
+        For simplicity, we model the collision between geometries as their bounding spheres' collision,
+        and the brod phase is to exhaustively account for all pairs of geometries
+        """
         self.num_collisions[None] = 0
         for I in ti.grouped(self.has_collision_update):
             self.has_collision_update[I] = 0
@@ -496,7 +540,9 @@ class Ball(RigidObjectField):
     def compute_energy(self):
         self.energy[None] = 0
         for I in ti.grouped(self.mass):
-            self.energy[None] += 0.5 * self.mass[I] * self.v[I].norm_sqr() + self.mass[I] * g_const * self.pos[I].z
+            self.energy[None] += 0.5 * self.mass[I] * self.v[I].norm_sqr() + \
+                                 0.5 * self.get_angular_momentum(I).dot(self.w[I]) + \
+                                 self.mass[I] * g_const * self.pos[I].z
 
     def step(self):
         self.apply_gravity()
@@ -508,7 +554,7 @@ class Ball(RigidObjectField):
         self.cur_step += 1
         collisions = self.num_collisions.to_numpy()
         if collisions > 0:
-            print('# collisions:', collisions, '  energy:', self.energy.to_numpy())
+            print('#rigid collisions:', collisions, '  energy:', self.energy.to_numpy())
 
     @ti.func
     def get_AABB(self, idx):

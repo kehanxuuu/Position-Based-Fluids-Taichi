@@ -132,12 +132,12 @@ def inertia_ball(m, r):
 
 
 @ti.func
-def inertia_torus(m, R, rho):
+def inertia_torus(m, R, r):
     """
-    Torus defined by: z^2 + (sqrt(x^2 + y^2) - rho)^2 <= R^2
+    Torus defined by: z^2 + (sqrt(x^2 + y^2) - R)^2 <= r^2, see https://physics.stackexchange.com/questions/327683/moment-of-inertia-of-torus
     """
-    Ixy = 1 / 8 * m * (5 * R * R + 4 * rho * rho)
-    Iz = 1 / 4 * m * (3 * R * R + 4 * rho * rho)
+    Ixy = 1 / 8 * m * (5 * r * r + 4 * R * R)
+    Iz = 1 / 4 * m * (3 * r * r + 4 * R * R)
     return ti.Matrix([
         [Ixy, 0, 0],
         [0, Ixy, 0],
@@ -163,6 +163,7 @@ def velocity_after_colliding_boundary(v_before, v_boundary, normal, eps):
     vrel_after = vrel_before_para - eps * smoothen(vrel_before_orth_magnitude, smoothen_controller) * normal
     return vrel_after + v_boundary
 
+
 @ti.func
 def sphere_collide_sphere(m1, m2, v1, v2, normal, eps):
     v1_before_orth = v1.dot(normal)
@@ -172,3 +173,21 @@ def sphere_collide_sphere(m1, m2, v1, v2, normal, eps):
     v1_after = (v1_after_orth - v1_before_orth) * normal + v1
     v2_after = (v2_after_orth - v2_before_orth) * normal + v2
     return v1_after, v2_after
+
+
+@ti.func
+def get_sphere_sdf_normal(c, r, p):
+    dp = p - c
+    distance_to_center = dp.norm()
+    signed_distance_to_surface = distance_to_center - r
+    normal = dp / distance_to_center
+    return signed_distance_to_surface, normal
+
+
+@ti.func
+def get_torus_sdf_normal(R, r, pos):
+    rho = ti.sqrt(pos.x * pos.x + pos.y * pos.y)
+    d = rho - R
+    signed_distance_to_surface = ti.sqrt(d * d + pos.z * pos.z) - r
+    normal = ti.Vector([d * pos.x / rho, d * pos.y / rho, pos.z]).normalized()
+    return signed_distance_to_surface, normal
