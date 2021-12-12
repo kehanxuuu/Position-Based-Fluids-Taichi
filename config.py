@@ -24,9 +24,9 @@ dim = 3
 bg_color = 0x112f41
 particle_color = 'velocity'
 boundary_color = 0xebaca2
-num_particles_x = 4
-num_particles_y = 2
-num_particles_z = 2
+num_particles_x = 40
+num_particles_y = 20
+num_particles_z = 20
 num_particles = num_particles_x * num_particles_y * num_particles_z
 max_num_particles_per_cell = 100
 max_num_neighbors = 100
@@ -68,3 +68,9 @@ vorticity_epsilon = 0.0
 xsph_c = 0.0
 
 smoothen_controller = 1 / 2 * g_const * time_delta * time_delta * 2.0  # see utils.smoothen and utils.velocity_after_colliding_boundary
+
+# For .off models
+template_ball_radius = 1.0
+# Torus defined by: z^2 + (sqrt(x^2 + y^2) - R)^2 <= r^2
+template_torus_R = 1.0  # distance from center of the torus to center of the tube
+template_torus_r = 0.3  # radius of the tube
