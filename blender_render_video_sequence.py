@@ -279,7 +279,7 @@ for i in range(obj_list_num):
     scene.render.filepath = render_img_path[i]
     bpy.ops.render.render(write_still=True, use_viewport=False)
     water.select_set(True)
-    # bpy.ops.object.delete()
+    bpy.ops.object.delete()
     delta = time.time() - frame_start_time
     frame_start_time = time.time()
     logging.debug("Finished rendering frame {} / {}, used {} seconds".format(i, obj_list_num, delta))
