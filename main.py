@@ -128,22 +128,20 @@ def main():
 
             fluid.move_board()
             fluid.run_pbf()
-            fluid.update_point_cloud()
             rigid.step()
 
-            render(vis, fluid, rigid, box)
-            if iter % 20 == 1:
+            if iter % 30 == 0:
                 time_interval = time.time() - start_time
-                fluid.print_stats(time_interval)
-                # ball_pos = rigid.pos.to_numpy()
-                # print(ball_pos)
+                fluid.print_stats(iter, time_interval)
+                fluid.update_point_cloud()
+                rigid.update_meshes()
+                render(vis, fluid, rigid, box)
+                vis.update_renderer()
+
             iter += 1
 
         if not vis.poll_events():
             break
-
-        if not control.paused:
-            vis.update_renderer()
 
 
 if __name__ == '__main__':

@@ -520,8 +520,8 @@ class Fluid(object):
     def adjust_board_omega(self, factor: ti.f32):
         self.board_states[3] *= factor
 
-    def print_stats(self, time_interval):
-        print('PBF stats:')
+    def print_stats(self, iterations, time_interval):
+        print(f'PBF iter {iterations}:')
         num = self.grid_num_particles.to_numpy()
         avg, max = np.mean(num), np.max(num)
         print(f'  #particles per cell: avg={avg:.2f} max={max}')

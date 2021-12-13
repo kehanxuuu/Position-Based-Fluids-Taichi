@@ -508,13 +508,12 @@ class SimpleGeometryRigid(RigidObjectField):
         self.detect_collision(self.eps)
         self.apply_damping_torque()
         self.advance(self.dt)
-        self.compute_energy()
-        self.update_meshes()
+        # self.compute_energy()
         self.t += self.dt
         self.cur_step += 1
-        collisions = self.num_collisions.to_numpy()
-        if collisions > 0:
-            print('#rigid collisions:', collisions, '  energy:', self.energy.to_numpy())
+        # collisions = self.num_collisions.to_numpy()
+        # if collisions > 0:
+        #     print('#rigid collisions:', collisions, '  energy:', self.energy.to_numpy())
 
     @ti.func
     def get_AABB(self, idx):
