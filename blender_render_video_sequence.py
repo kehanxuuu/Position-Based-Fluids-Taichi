@@ -67,7 +67,7 @@ for obj_name in obj_name_list:
     json_path_list.append(dir_path_rigid_json+fileName+".json")
 
 sphere_obj_path = "C:/Users/Kehan Xu/Documents/ETH/HS2021/Physically Based Simulation/fluid-fans/data/sphere.obj"
-torus_obj_path = "C:/Users/Kehan Xu/Documents/ETH/HS2021/Physically Based Simulation/fluid-fans/data/torus.obj"
+torus_obj_path = "C:/Users/Kehan Xu/Documents/ETH/HS2021/Physically Based Simulation/fluid-fans/data/torus_fine.obj"
 sphere_tex_path = "C:/Users/Kehan Xu/Downloads/Sphere.jpg" # sphere_tex_tmp
 sphere_tex_path_2 = "C:/Users/Kehan Xu/Downloads/Sphere_2.jpg"
 torus_tex_path = "C:/Users/Kehan Xu/Downloads/Torus.jpg"
@@ -222,8 +222,7 @@ frame_start_time = time.time()
 total_start_time = time.time()
 spheres = []
 toruses = []
-for i in range(1):
-# for i in range(obj_list_num):
+for i in range(obj_list_num):
     # load dict
     with open(json_path_list[i],'r') as load_f:
         rigid_dict = json.load(load_f)
@@ -259,11 +258,11 @@ for i in range(1):
     for j in range(n_balls):
         spheres[j].location = (rigid_pos[j][0]*scale_ratio[0], -rigid_pos[j][1]*scale_ratio[1], rigid_pos[j][2]*scale_ratio[2])
         angle_x, angle_y, angle_z = euler_from_quaternion(rigid_quat[j]) # in radians
-        spheres[j].rotation_euler = (angle_x, angle_y, angle_z)
+        spheres[j].rotation_euler = (90+angle_x, -angle_y, angle_z)
     for j in range(n_toruses):
         toruses[j].location = (rigid_pos[j+n_balls][0]*scale_ratio[0], -rigid_pos[j+n_balls][1]*scale_ratio[1], rigid_pos[j+n_balls][2]*scale_ratio[2])
         angle_x, angle_y, angle_z = euler_from_quaternion(rigid_quat[j+n_balls]) # in radians
-        toruses[j].rotation_euler = (angle_x, angle_y, angle_z)
+        toruses[j].rotation_euler = (90+angle_x, -angle_y, angle_z)
     # load water
     obj_name = obj_name_list_wo_ext[i]
     bpy.ops.import_scene.obj(filepath=obj_path_list[i]) # import water
