@@ -229,10 +229,13 @@ class Fluid(object):
                 if signed_distance_to_surface < 0:
                     self.collisions_with_rigid[None] += 1
                     # Handle collision
-                    force = stiffness * -signed_distance_to_surface * normal
+                    collision_force = stiffness * -signed_distance_to_surface * normal
                     # Apply forces of equal magnitude but opposite direction to the particle and the ball
-                    self.forces[p_i] += force
-                    self.rigid.apply_force(-force, pos, rigid_idx)
+                    self.forces[p_i] += collision_force
+                    force = -collision_force
+                    force.z += 20.0  # buoyancy
+                    # force += -2.0 * self.rigid.v[rigid_idx]
+                    self.rigid.apply_force(force, pos, rigid_idx)
 
     def add_rigid_body_collision_forces(self, stiffness: ti.f32):
         """
@@ -246,7 +249,7 @@ class Fluid(object):
     @ti.kernel
     def move_board(self):
         # probably more accurate to exert force on particles according to hooke's law.
-        amplitude = 10
+        amplitude = 6
         t = self.board_states[2]
         w = self.board_states[3]
         t += 1.0
@@ -501,7 +504,7 @@ class Fluid(object):
             num_particles_xy = num_particles_x * num_particles_y
             i_mod_xy = i % num_particles_xy
             i_mod_x = i % num_particles_x
-            offs = ti.Vector([(boundary[0] - delta * num_particles_x) * (0.0 if i_mod_x < num_particles_x // 2 else 0.9),
+            offs = ti.Vector([(boundary[0] - delta * num_particles_x) * 0.5,
                               (boundary[1] - delta * num_particles_y) * 0.5,
                               boundary[2] * 0.05])
             self.positions[i] = ti.Vector([i_mod_x, i_mod_xy // num_particles_x, i // num_particles_xy]) * delta + offs

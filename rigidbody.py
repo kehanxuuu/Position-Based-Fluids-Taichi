@@ -349,63 +349,17 @@ class RigidObjectField(object):
 
 
 @ti.data_oriented
-class Cube(RigidObjectField):
-    """
-    A RigidObjectField with only some simple cubes
-    """
-
-    def __init__(self):
-        super().__init__(['./data/cube.off', './data/rect.off'])
-        # set initial condition of simulation
-        self.cur_step = 0
-        self.t = 0.0
-        self.dt = time_delta
-        self._set_sim_init()
-        self.update_meshes()
-
-    @ti.kernel
-    def _set_sim_init(self):
-        for idx in ti.grouped(self.pos):
-            self.set_inertia(
-                self.get_mass(idx) * 2.0 / 6.0
-                * ti.Matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]]),
-                idx)  # inertia of cube
-        self.set_position(ti.Vector([0.2 * boundary[0], 0.5 * boundary[1], 0.5 * boundary[2]]), (0))
-        self.set_position(ti.Vector([0.6 * boundary[0], 0.5 * boundary[1], 0.5 * boundary[2]]), (1))
-        self.update_new_positions()
-
-    def reinitialize(self):
-        # reset non taichi-scope variables here
-        self.t = 0.0
-        self.cur_step = 0
-        self.reset_members()
-        self._set_sim_init()
-        self.update_meshes()
-
-    @ti.kernel
-    def apply_gravity(self):
-        for idx in ti.grouped(self.mass):
-            self.apply_force(ti.Vector([0.0, 0.0, -g_const]) * self.get_mass(idx), self.get_position(idx), idx)
-
-    def step(self):
-        self.apply_gravity()
-        self.advance(self.dt)
-        self.update_meshes()
-        self.t += self.dt
-        self.cur_step += 1
-
-
-@ti.data_oriented
 class SimpleGeometryRigid(RigidObjectField):
     """
     A RigidObjectField with only balls or toruses
     """
 
-    def __init__(self, n_balls, n_toruses):
+    def __init__(self, n_balls, n_toruses, min_scale, max_scale):
         """
         Initialize a rigid body field with balls and toruses with random sizes and positions
         """
-        super().__init__(['./data/sphere.off'] * n_balls + ['./data/torus.off'] * n_toruses, 1 + 3 * np.random.random((n_balls + n_toruses,)))
+        super().__init__(['./data/sphere.off'] * n_balls + ['./data/torus.off'] * n_toruses,
+                         min_scale + (max_scale - min_scale) * np.random.random((n_balls + n_toruses,)))
         self.n_balls = n_balls
         self.n_toruses = n_toruses
 
@@ -435,7 +389,7 @@ class SimpleGeometryRigid(RigidObjectField):
     @ti.kernel
     def _set_sim_init(self):
         for I in ti.grouped(self.mass):
-            self.set_mass(10 * self.radius[I], I)
+            self.set_mass(10, I)
             if I[0] < self.n_balls:
                 self.set_inertia(utils.inertia_ball(self.get_mass(I), self.radius[I]), I)
             else:
@@ -444,7 +398,7 @@ class SimpleGeometryRigid(RigidObjectField):
             self.set_position(ti.Vector([
                 (0.2 + 0.6 * ti.random()) * boundary[0],
                 (0.2 + 0.6 * ti.random()) * boundary[1],
-                (0.6 + 0.2 * ti.random()) * boundary[2]
+                (0.4 + 0.1 * ti.random()) * boundary[2]
             ]), I)
             # Set random velocity
             v = 20.0 * ti.random()
@@ -544,9 +498,15 @@ class SimpleGeometryRigid(RigidObjectField):
                                  0.5 * self.get_angular_momentum(I).dot(self.w[I]) + \
                                  self.mass[I] * g_const * self.pos[I].z
 
+    @ti.kernel
+    def apply_damping_torque(self):
+        for I in ti.grouped(self.mass):
+            self.apply_torque(-5.0 * self.w[I], I)
+
     def step(self):
         self.apply_gravity()
         self.detect_collision(self.eps)
+        self.apply_damping_torque()
         self.advance(self.dt)
         self.compute_energy()
         self.update_meshes()

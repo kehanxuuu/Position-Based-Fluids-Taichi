@@ -24,7 +24,7 @@ dim = 3
 bg_color = 0x112f41
 particle_color = 'velocity'
 boundary_color = 0xebaca2
-num_particles_x = 40
+num_particles_x = 80
 num_particles_y = 20
 num_particles_z = 20
 num_particles = num_particles_x * num_particles_y * num_particles_z
@@ -59,13 +59,13 @@ rigid_boundary_eps = 0.5
 rigid_rigid_eps = 0.5
 particle_boundary_stiffness = 200  # for force based collision with boundaries
 rigid_boundary_stiffness = 3e3
-particle_rigid_stiffness = 600  # for force based collision between particle and rigid bodies
+particle_rigid_stiffness = 800  # for force based collision between particle and rigid bodies
 
 poly6_factor = 315.0 / 64.0 / math.pi
 spiky_grad_factor = -45.0 / math.pi
 
-vorticity_epsilon = 0.0
-xsph_c = 0.0
+vorticity_epsilon = 0.3
+xsph_c = 0.1
 
 smoothen_controller = 1 / 2 * g_const * time_delta * time_delta * 2.0  # see utils.smoothen and utils.velocity_after_colliding_boundary
 
@@ -73,4 +73,4 @@ smoothen_controller = 1 / 2 * g_const * time_delta * time_delta * 2.0  # see uti
 template_ball_radius = 1.0
 # Torus defined by: z^2 + (sqrt(x^2 + y^2) - R)^2 <= r^2
 template_torus_R = 1.0  # distance from center of the torus to center of the tube
-template_torus_r = 0.3  # radius of the tube
+template_torus_r = 0.4  # radius of the tube
