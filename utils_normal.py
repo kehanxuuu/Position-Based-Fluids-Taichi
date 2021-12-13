@@ -1,4 +1,7 @@
 import numpy as np
+import json
+import subprocess
+import os
 
 # perlin noise
 # usage: generate_heighmap_noise(terrain_width, terrain_height, scale)
@@ -46,3 +49,36 @@ def generate_heighmap_noise(width, height, scale=1, ratioX=3.1, ratioY=1.3, shif
             # avoid (0, 0), where noise is definitely 0
 			noise[i][j] = fractional_noise(np.array([(i+1)*ratioX + shift[0], (j+1)*ratioY] + shift[1]))
 	return noise * scale
+
+
+# particle to mesh
+def convert_particle_info_to_json(input, filepath):
+    filepath = filepath + ".json"
+    input_list = input.tolist()
+    with open(filepath, 'w') as outfile:
+        json.dump(input_list, outfile)
+
+def convert_rigid_info_to_json(input, filepath):
+	# input is a dict
+    filepath = filepath + ".json"
+    with open(filepath, 'w') as outfile:
+        json.dump(input, outfile)
+
+def convert_json_to_mesh_command_line(particle_dir, mesh_dir, filename,
+                                      particle_radius=0.8,
+                                      smoothing_length=2.0,
+                                      cube_size=0.5,
+                                      surface_threshold=0.6
+                                     ):
+    # need to install rust tool chain & splashsurf: https://github.com/w1th0utnam3/splashsurf
+    filepath_particle = os.path.join(particle_dir, filename) + ".json"
+    filename_mesh = filename + ".obj"
+    # todo: splashsurf supports batch processing, but only for .vtk and not for .obj
+    bashCommand = "splashsurf reconstruct -i {} --output-dir={} -o {} --particle-radius={} --smoothing-length={} --cube-size={} --surface-threshold={} --normals=on".format(filepath_particle, mesh_dir, filename_mesh, particle_radius, smoothing_length, cube_size, surface_threshold)
+    process = subprocess.Popen(bashCommand.split(), stdout=subprocess.PIPE)
+    _, _ = process.communicate() # output, error
+
+
+def clear_directory(directory):
+    for filename in os.listdir(directory):
+        os.remove(os.path.join(directory, filename))

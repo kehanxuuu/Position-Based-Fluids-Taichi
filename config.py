@@ -74,3 +74,6 @@ template_ball_radius = 1.0
 # Torus defined by: z^2 + (sqrt(x^2 + y^2) - R)^2 <= r^2
 template_torus_R = 1.0  # distance from center of the torus to center of the tube
 template_torus_r = 0.4  # radius of the tube
+
+output_mesh = True
+clear_particle_mesh_directory = True

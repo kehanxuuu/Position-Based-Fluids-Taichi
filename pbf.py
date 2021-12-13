@@ -40,7 +40,7 @@ class Fluid(object):
         self.lambdas = ti.field(float)
         self.position_deltas = ti.Vector.field(dim, float)
         # 0: x-pos, 1: timestep in sin()
-        self.board_states = ti.field(float, 4)  # x, v, t, w
+        self.board_states = ti.field(float, 6)  # x_right, v, t, w, x_left, turn
 
         ti.root.dense(ti.i, num_particles).place(self.old_positions, self.positions, self.velocities, self.forces, self.omegas, self.density)
         grid_snode = ti.root.dense(ti.ijk, grid_size)
@@ -91,13 +91,13 @@ class Fluid(object):
         """
         Simply confine the position into the boundary, no collision response generated
         """
-        bmin = particle_radius_in_world * 0.1
+        bmin = ti.Vector([self.board_states[4], 0, 0]) + particle_radius_in_world * 0.1
         bmax = ti.Vector([self.board_states[0], boundary[1], boundary[2]]) - particle_radius_in_world * 0.1
         has_confinement = 0
         for i in ti.static(range(dim)):
             # Use randomness to prevent particles from sticking into each other after clamping
-            if p[i] <= bmin:
-                p[i] = bmin + epsilon * ti.random()
+            if p[i] <= bmin[i]:
+                p[i] = bmin[i] + epsilon * ti.random()
                 has_confinement = 1
             elif bmax[i] <= p[i]:
                 p[i] = bmax[i] - epsilon * ti.random()
@@ -111,7 +111,7 @@ class Fluid(object):
         """
         Detect boundary collisions, confine positions, and add impulse to velocities
         """
-        bmin = particle_radius_in_world
+        bmin = ti.Vector([self.board_states[4], 0, 0]) + particle_radius_in_world
         bmax = ti.Vector([self.board_states[0], boundary[1], boundary[2]]) - particle_radius_in_world
         for i in self.positions:
             pos = self.positions[i]
@@ -120,8 +120,8 @@ class Fluid(object):
             v_boundary = ti.Vector([0.0, 0.0, 0.0])
             for j in ti.static(range(dim)):
                 # Use randomness to prevent particles from sticking into each other after clamping
-                if pos[j] <= bmin:
-                    pos[j] = bmin + epsilon * ti.random()
+                if pos[j] <= bmin[j]:
+                    pos[j] = bmin[j] + epsilon * ti.random()
                     normal[j] = 1.0
                     has_collision = 1
                 elif bmax[j] <= pos[j]:
@@ -142,7 +142,7 @@ class Fluid(object):
         # Also handle the collisions between the rigid bodies and the boundaries
         for I in ti.grouped(self.rigid.pos):
             radius = self.rigid.radius[I]
-            bmin = radius
+            bmin = ti.Vector([self.board_states[4], 0, 0]) + radius
             bmax = ti.Vector([self.board_states[0], boundary[1], boundary[2]]) - radius
             pos = self.rigid.pos[I]
             has_collision = 0
@@ -150,8 +150,8 @@ class Fluid(object):
             v_boundary = ti.Vector([0.0, 0.0, 0.0])
             for j in ti.static(range(dim)):
                 # Use randomness to prevent particles from sticking into each other after clamping
-                if pos[j] <= bmin:
-                    pos[j] = bmin
+                if pos[j] <= bmin[j]:
+                    pos[j] = bmin[j]
                     normal[j] = 1.0
                     has_collision = 1
                 elif bmax[j] <= pos[j]:
@@ -174,7 +174,7 @@ class Fluid(object):
         """
         Detect boundary collisions, and add elastic force to velocities
         """
-        bmin = particle_radius_in_world
+        bmin = ti.Vector([self.board_states[4], 0, 0]) + particle_radius_in_world
         bmax = ti.Vector([self.board_states[0], boundary[1], boundary[2]]) - particle_radius_in_world
         for i in self.positions:
             pos = self.positions[i]
@@ -182,8 +182,8 @@ class Fluid(object):
             dp = ti.Vector([0.0, 0.0, 0.0])  # stress from solid to liquid
             for j in ti.static(range(dim)):
                 # Use randomness to prevent particles from sticking into each other after clamping
-                if pos[j] <= bmin:
-                    dp[j] = bmin - pos[j]
+                if pos[j] <= bmin[j]:
+                    dp[j] = bmin[j] - pos[j]
                     has_collision = 1
                 elif bmax[j] <= pos[j]:
                     dp[j] = bmax[j] - pos[j]
@@ -197,15 +197,15 @@ class Fluid(object):
         # Also handle the collisions between the rigid bodies and the boundaries
         for I in ti.grouped(self.rigid.pos):
             radius = self.rigid.radius[I]
-            bmin = radius
+            bmin = ti.Vector([self.board_states[4], 0, 0]) + radius
             bmax = ti.Vector([self.board_states[0], boundary[1], boundary[2]]) - radius
             pos = self.rigid.pos[I]
             has_collision = 0
             dp = ti.Vector([0.0, 0.0, 0.0])  # stress from boundary to rigid
             for j in ti.static(range(dim)):
                 # Use randomness to prevent particles from sticking into each other after clamping
-                if pos[j] <= bmin:
-                    dp[j] = bmin - pos[j]
+                if pos[j] <= bmin[j]:
+                    dp[j] = bmin[j] - pos[j]
                     has_collision = 1
                 elif bmax[j] <= pos[j]:
                     dp[j] = bmax[j] - pos[j]
@@ -252,13 +252,21 @@ class Fluid(object):
         amplitude = 6
         t = self.board_states[2]
         w = self.board_states[3]
+        turn = self.board_states[5]
         t += 1.0
         if w * t > 2.0 * np.pi:
             t -= 2.0 * np.pi / w
+            turn = turn + 0.5
+            if abs(turn-1.5) < 1e-5:
+                turn = 0.0
         v = -amplitude * w * ti.sin(w * t)
-        self.board_states[0] += v * 1.0
+        if abs(turn) < 1e-5:  
+            self.board_states[0] += v * 1.0
+        elif abs(turn-1) < 1e-5:
+            self.board_states[4] -= v * 1.0
         self.board_states[1] = v
         self.board_states[2] = t
+        self.board_states[5] = turn
 
     @ti.kernel
     def update_grid(self):
@@ -515,6 +523,9 @@ class Fluid(object):
         self.board_states[1] = 0.0  # v
         self.board_states[2] = 0.0  # t
         self.board_states[3] = 0.05  # w
+        self.board_states[4] = epsilon  # x
+        self.board_states[5] = 0.0  # turn
+
 
     @ti.kernel
     def adjust_board_omega(self, factor: ti.f32):

@@ -1,13 +1,17 @@
 import time
+import os
 
 from pbf import *
 from rigidbody import *
+import utils_normal
 
 
-def render(vis, fluid: Fluid, rigid: RigidObjectField, box):
+def render(vis, fluid: Fluid, rigid: RigidObjectField, box, box2):
     vis.update_geometry(fluid.pcd)
     box.translate(np.array([fluid.board_states[0], boundary[2] / 2, boundary[1] / 2]) * screen_to_world_ratio, relative=False)
     vis.update_geometry(box)
+    box2.translate(np.array([fluid.board_states[4], boundary[2] / 2, boundary[1] / 2]) * screen_to_world_ratio, relative=False)
+    vis.update_geometry(box2)
     for mesh in rigid.meshes.ravel():
         vis.update_geometry(mesh)
 
@@ -26,7 +30,7 @@ def main():
 
     control = GUIState()
 
-    rigid = SimpleGeometryRigid(5, 10, 1.0, 1.2)
+    rigid = SimpleGeometryRigid(5, 10, 1.5, 1.8)
     for mesh in rigid.meshes.ravel():
         vis.add_geometry(mesh)
 
@@ -113,9 +117,28 @@ def main():
     box.translate(np.array([screen_res[0], screen_res[1] / 2, screen_res[2] / 2]), relative=False)
     vis.add_geometry(box)
 
+    box2 = o3d.geometry.TriangleMesh.create_box(3, screen_res[1], screen_res[2])
+    box2.translate(np.array([0, screen_res[1] / 2, screen_res[2] / 2]), relative=False)
+    vis.add_geometry(box2)
+
     print(f'boundary={boundary} grid={grid_size} cell_size={cell_size}')
 
     iter = 0
+    if output_mesh:
+        particle_dir = "particles"
+        rigid_dir = "rigids"
+        mesh_dir = "meshes"
+        frame_start = 150
+        frame_end = 450
+
+        os.makedirs(particle_dir, exist_ok=True)
+        os.makedirs(mesh_dir, exist_ok=True)
+
+        if clear_particle_mesh_directory:
+            utils_normal.clear_directory(particle_dir)
+            utils_normal.clear_directory(rigid_dir)
+            utils_normal.clear_directory(mesh_dir)
+
     while True:
         if control.reset:
             fluid.init_particles()
@@ -130,13 +153,35 @@ def main():
             fluid.run_pbf()
             rigid.step()
 
-            if iter % 30 == 0:
+            if iter % 1 == 0:
                 time_interval = time.time() - start_time
                 fluid.print_stats(iter, time_interval)
                 fluid.update_point_cloud()
                 rigid.update_meshes()
-                render(vis, fluid, rigid, box)
+                render(vis, fluid, rigid, box, box2)
                 vis.update_renderer()
+
+            if output_mesh:
+                if iter >= frame_start and iter < frame_end:
+                    filename = "frame_{:0>5d}".format(iter)
+                    filepath_particle = os.path.join(particle_dir, filename)
+                    filepath_rigid = os.path.join(rigid_dir, filename)
+                    pos_np = fluid.positions.to_numpy()
+                    pos_np = pos_np[:, (0, 2, 1)]
+                    utils_normal.convert_particle_info_to_json(pos_np, filepath_particle)
+                    utils_normal.convert_json_to_mesh_command_line(particle_dir, mesh_dir, filename)
+
+                    rigid_pos_np = rigid.pos.to_numpy() # without [:, (0, 2, 1)] here!
+                    rigid_quat_np = rigid.quat.to_numpy() # quat
+                    rigid_dict_json = {
+                        "n_balls": rigid.n_balls,
+                        "n_toruses": rigid.n_toruses,
+                        "scalings": rigid.scalings.tolist(),
+                        "pos": rigid_pos_np.tolist(),
+                        "quat": rigid_quat_np.tolist()
+                    }
+                    utils_normal.convert_rigid_info_to_json(rigid_dict_json, filepath_rigid)
+                    
 
             iter += 1
 
