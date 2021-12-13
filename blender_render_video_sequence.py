@@ -76,7 +76,7 @@ environment_tex_path = "C:/Users/Kehan Xu/Downloads/Skies-001.jpg"
 
 scale_ratio = [0.091, 0.091, 0.091]
 
-command_line = False
+# command_line = False
 
 def look_at(obj_camera, point=Vector((0, 0, 0))):
     loc_camera = obj_camera.location
@@ -99,16 +99,17 @@ except:
 
 camera = bpy.data.objects['Camera']
 camera.location = (16.68, -14.07, 10.20)
-look_at(camera, Vector((0, 0, 0)))
-camera.select_set(True)
-ov=bpy.context.copy()
-ov['area']=[a for a in bpy.context.screen.areas if a.type=="VIEW_3D"][0]
-if command_line:
-    bpy.ops.transform.rotate(ov, value=math.radians(3), orient_axis='Z')
-    bpy.ops.transform.rotate(ov, value=math.radians(1.1), orient_axis='Y')
-else:
-    bpy.ops.transform.rotate(value=math.radians(3), orient_axis='Z')
-    bpy.ops.transform.rotate(value=math.radians(1.1), orient_axis='Y')
+camera.rotation_euler = (math.radians(62), math.radians(-2.91), math.radians(45.6))
+# look_at(camera, Vector((0, 0, 0)))
+# camera.select_set(True)
+# if command_line:
+#     ov=bpy.context.copy()
+#     ov['area']=[a for a in bpy.context.screen.areas if a.type=="VIEW_3D"][0]
+#     bpy.ops.transform.rotate(ov, value=math.radians(3), orient_axis='Z')
+#     bpy.ops.transform.rotate(ov, value=math.radians(1.1), orient_axis='Y')
+# else:
+#     bpy.ops.transform.rotate(value=math.radians(3), orient_axis='Z')
+#     bpy.ops.transform.rotate(value=math.radians(1.1), orient_axis='Y')
 
 
 # create water material
@@ -192,15 +193,18 @@ light_ob = bpy.context.object
 light = light_ob.data
 light.energy = 1
 light_ob.location = (3.644, 15.456, 12.611)
-light_ob.select_set(True)
-if command_line:
-    bpy.ops.transform.rotate(ov, value=math.radians(-40.5), orient_axis='X')
-    bpy.ops.transform.rotate(ov, value=math.radians(-46), orient_axis='Y')
-    bpy.ops.transform.rotate(ov, value=math.radians(-143), orient_axis='Z')
-else:
-    bpy.ops.transform.rotate(value=math.radians(-40.5), orient_axis='X')
-    bpy.ops.transform.rotate(value=math.radians(-46), orient_axis='Y')
-    bpy.ops.transform.rotate(value=math.radians(-143), orient_axis='Z')
+light_ob.rotation_euler = (math.radians(40.5), math.radians(46), math.radians(143))
+# light_ob.select_set(True)
+# if command_line:
+#     ov=bpy.context.copy()
+#     ov['area']=[a for a in bpy.context.screen.areas if a.type=="VIEW_3D"][0]
+#     bpy.ops.transform.rotate(ov, value=math.radians(-40.5), orient_axis='X')
+#     bpy.ops.transform.rotate(ov, value=math.radians(-46), orient_axis='Y')
+#     bpy.ops.transform.rotate(ov, value=math.radians(-143), orient_axis='Z')
+# else:
+#     bpy.ops.transform.rotate(value=math.radians(-40.5), orient_axis='X')
+#     bpy.ops.transform.rotate(value=math.radians(-46), orient_axis='Y')
+#     bpy.ops.transform.rotate(value=math.radians(-143), orient_axis='Z')
 
 
 # render settings
@@ -218,8 +222,8 @@ frame_start_time = time.time()
 total_start_time = time.time()
 spheres = []
 toruses = []
-# for i in range(1):
-for i in range(obj_list_num):
+for i in range(1):
+# for i in range(obj_list_num):
     # load dict
     with open(json_path_list[i],'r') as load_f:
         rigid_dict = json.load(load_f)
@@ -276,7 +280,7 @@ for i in range(obj_list_num):
     scene.render.filepath = render_img_path[i]
     bpy.ops.render.render(write_still=True, use_viewport=False)
     water.select_set(True)
-    bpy.ops.object.delete()
+    # bpy.ops.object.delete()
     delta = time.time() - frame_start_time
     frame_start_time = time.time()
     logging.debug("Finished rendering frame {} / {}, used {} seconds".format(i, obj_list_num, delta))
