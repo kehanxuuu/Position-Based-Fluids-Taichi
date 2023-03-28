@@ -21,11 +21,11 @@ Position Based Fluids yields stable simulation even under large time steps, whil
 We follow the method described in the [PBF paper](https://mmacklin.com/pbf_sig_preprint.pdf), including the improvement of vorticity confinement and XSPH viscosity (Section 4 and 5).
 
 Pseudocode of the simulation process:
-```c++
+```
 For each iteration:
     For each particle:
         Update velocity with external forces
-        Update position using updated velocity
+        Update position with updated velocity
         Modify position to meet the constraints (constant density)
         Re-compute velocity with the modified position
 ```
@@ -46,4 +46,4 @@ We have written a script for this purpose, see the [rendering branch](https://gi
 
 ## Gallery
 <p align="center"><img src="img/demo_box-compressed.gif"></p>
-<p align="center"><img src="img/terrain_water_video-compressed.gif" height="600" width="300"></p>
+<p align="center"><img src="img/terrain_water_video-compressed.gif" height="600" width="350"></p>
