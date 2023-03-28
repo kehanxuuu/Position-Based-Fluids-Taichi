@@ -42,8 +42,8 @@ The implementation of position based fluids is in `pbf.py`. `rigidbody.py` conta
 ## Rendering
 In every frame, the simulation output is a bunch of particle positions. We use [splashsurf](https://github.com/w1th0utnam3/splashsurf) to reconstruct surface for particle data. The generated water mesh is then rendered using [Blender](https://www.blender.org), along with other objects (ball, torus, terrain etc.).
 
-We have written a script for this purpose, see the [rendering branch](xxx).
+We have written a script for this purpose, see the [rendering branch](https://github.com/Fiona730/Position-Based-Fluids-Taichi/tree/rendering).
 
 ## Gallery
 <p align="center"><img src="img/demo_box-compressed.gif"></p>
-<p align="center"><img src="img/terrain_water_video-compressed.gif" height="600"></p>
+<p align="center"><img src="img/terrain_water_video-compressed.gif" height="600" width="300"></p>
