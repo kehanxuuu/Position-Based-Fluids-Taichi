@@ -45,3 +45,5 @@ In every frame, the simulation output is a bunch of particle positions. We use [
 We have written a script for this purpose, see the [rendering branch](xxx).
 
 ## Gallery
+<p align="center"><img src="img/demo_box-compressed.gif"></p>
+<p align="center"><img src="img/terrain_water_video-compressed.gif" height="600"></p>
