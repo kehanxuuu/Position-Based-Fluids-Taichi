@@ -1,6 +1,8 @@
 import math
 
-screen_res = (800, 400, 400)  # z and y axis in the simulation are swapped for better visualization
+device = 'gpu'
+
+screen_res = (800, 400, 200)  # z and y axis in the simulation are swapped for better visualization
 screen_to_world_ratio = 10.0
 boundary = (screen_res[0] / screen_to_world_ratio,
             screen_res[2] / screen_to_world_ratio,
@@ -20,9 +22,9 @@ grid_size = (round_up(boundary[0], 1), round_up(boundary[1], 1), round_up(bounda
 
 dim = 3
 bg_color = 0x112f41
-particle_color = 'density'
+particle_color = 'velocity'
 boundary_color = 0xebaca2
-num_particles_x = 40
+num_particles_x = 80
 num_particles_y = 20
 num_particles_z = 20
 num_particles = num_particles_x * num_particles_y * num_particles_z
@@ -37,6 +39,7 @@ particle_radius_in_world = particle_radius / screen_to_world_ratio
 h = 1.1
 mass = 1.0
 rho0 = 1.0
+g_const = 9.8
 lambda_epsilon = 100.0
 pbf_num_iters = 5
 corr_deltaQ_coeff = 0.3  # in the paper, 0.1-0.3 for use in Eq(13)
@@ -45,8 +48,29 @@ corrK = 0.001
 # corrN = 4.0
 neighbor_radius = h * 1.05  # TODO: need to change
 
+# SDF params
+sdf_inf = 1e6
+sdf_eps = 1e-3  # for normal computation
+
+# Collision params
+particle_boundary_eps = 0.2  # vrel+ / vrel-
+particle_rigid_eps = 0.5
+rigid_boundary_eps = 0.5
+rigid_rigid_eps = 0.5
+particle_boundary_stiffness = 200  # for force based collision with boundaries
+rigid_boundary_stiffness = 3e3
+particle_rigid_stiffness = 800  # for force based collision between particle and rigid bodies
+
 poly6_factor = 315.0 / 64.0 / math.pi
 spiky_grad_factor = -45.0 / math.pi
 
-vorticity_epsilon = 0.0
-xsph_c = 0.0
+vorticity_epsilon = 0.3
+xsph_c = 0.1
+
+smoothen_controller = 1 / 2 * g_const * time_delta * time_delta * 2.0  # see utils.smoothen and utils.velocity_after_colliding_boundary
+
+# For .off models
+template_ball_radius = 1.0
+# Torus defined by: z^2 + (sqrt(x^2 + y^2) - R)^2 <= r^2
+template_torus_R = 1.0  # distance from center of the torus to center of the tube
+template_torus_r = 0.4  # radius of the tube

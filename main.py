@@ -1,41 +1,20 @@
 import time
 
-import open3d as o3d
-
 from pbf import *
+from rigidbody import *
 
-from matplotlib import cm
 
-
-def render(fluid: Fluid, vis, pcd, box):
-    pos_np = fluid.positions.to_numpy()
-    pos_np *= screen_to_world_ratio
-    pos_np = pos_np[:, (0, 2, 1)]  # recap: z and y axis in the simulation are swapped for better visualization
-    pcd.points = o3d.utility.Vector3dVector(pos_np)
-    if particle_color == 'velocity':
-        velnorm_np = np.linalg.norm(fluid.velocities.to_numpy(), axis=1) / cm_max_velocity
-        pcd.colors = o3d.utility.Vector3dVector(cm.jet(velnorm_np)[:, :3])
-    elif particle_color == 'density':
-        fluid.find_neighbour()
-        fluid.compute_density()
-        density_np = fluid.density.to_numpy()
-        print(f'{density_np.min()=}, {density_np.max()=}, {density_np.mean()=}')
-        # if (density_np < rho0).any():
-        #     print('Exists density smaller than rho0')
-        density_np = density_np / rho0 * 0.5  # map to [0, 1]
-        pcd.colors = o3d.utility.Vector3dVector(cm.RdBu(density_np)[:, :3])
-    elif particle_color == 'vorticity':
-        omegas_np = np.linalg.norm(fluid.omegas.to_numpy(), axis=1) / cm_max_vorticity
-        pcd.colors = o3d.utility.Vector3dVector(cm.YlGnBu(omegas_np)[:, :3])
-    else:
-        raise ValueError('unknown particle color key')
-    vis.update_geometry(pcd)
-    box.translate(np.array([fluid.board_states[None][0], boundary[1] / 2, boundary[2] / 2]) * screen_to_world_ratio, relative=False)
+def render(vis, fluid: Fluid, rigid: RigidObjectField, box):
+    vis.update_geometry(fluid.pcd)
+    box.translate(np.array([fluid.board_states[0], boundary[2] / 2, boundary[1] / 2]) * screen_to_world_ratio, relative=False)
     vis.update_geometry(box)
+    for mesh in rigid.meshes.ravel():
+        vis.update_geometry(mesh)
 
 
 def main():
-    ti.init(arch=ti.gpu)
+    ti.init(arch=ti.gpu if device == 'gpu' else ti.cpu, random_seed=0)
+
     # setup gui
     vis = o3d.visualization.VisualizerWithKeyCallback()
     vis.create_window()
@@ -46,6 +25,15 @@ def main():
             self.paused = False
 
     control = GUIState()
+
+    rigid = SimpleGeometryRigid(5, 10, 1.0, 1.2)
+    for mesh in rigid.meshes.ravel():
+        vis.add_geometry(mesh)
+
+    fluid = Fluid(rigid)
+    fluid.init_particles()
+    fluid.update_point_cloud()
+    vis.add_geometry(fluid.pcd)
 
     def resetSimulation(_):
         control.reset ^= 1
@@ -64,14 +52,37 @@ def main():
             vorticity_epsilon = 0
 
     def increaseViscosity(_):
-        global xsph_c
-        xsph_c += 0.05
+        fluid.xsph_c += 0.05
 
     def decreaseViscosity(_):
-        global xsph_c
-        xsph_c -= 0.05
-        if xsph_c <= 0:
-            xsph_c = 0
+        fluid.xsph_c -= 0.05
+        fluid.xsph_c = max(0, fluid.xsph_c)
+
+    def increaseCollisionEps(_):
+        fluid.rigid_boundary_eps += 0.1
+        rigid.eps += 0.1
+
+    def decreaseCollisionEps(_):
+        fluid.rigid_boundary_eps = max(fluid.rigid_boundary_eps - 0.1, 0)
+        rigid.eps = max(rigid.eps - 0.1, 0)
+
+    def increaseStiffness(_):
+        fluid.rigid_boundary_stiffness *= 2
+
+    def decreaseStiffness(_):
+        fluid.rigid_boundary_stiffness /= 2
+
+    def increaseBoardOmega(_):
+        fluid.adjust_board_omega(1.1)
+
+    def decreaseBoardOmega(_):
+        fluid.adjust_board_omega(1.0 / 1.1)
+
+    def make_particle_color_callback(color: str):
+        def callback(_):
+            fluid.particle_color = color
+
+        return callback
 
     vis.register_key_callback(ord("R"), resetSimulation)
     vis.register_key_callback(ord(" "), pause)  # space
@@ -79,6 +90,13 @@ def main():
     vis.register_key_callback(ord("D"), decreaseVorticity)
     vis.register_key_callback(ord("W"), increaseViscosity)
     vis.register_key_callback(ord("S"), decreaseViscosity)
+    vis.register_key_callback(ord("2"), increaseCollisionEps)
+    vis.register_key_callback(ord("1"), decreaseCollisionEps)
+    vis.register_key_callback(ord("4"), increaseBoardOmega)
+    vis.register_key_callback(ord("3"), decreaseBoardOmega)
+    vis.register_key_callback(ord("5"), make_particle_color_callback('velocity'))
+    vis.register_key_callback(ord("6"), make_particle_color_callback('density'))
+    vis.register_key_callback(ord("7"), make_particle_color_callback('vorticity'))
 
     coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
         size=100, origin=[0, 0, 0]
@@ -91,39 +109,39 @@ def main():
     aabb.color = [0.7, 0.7, 0.7]
     vis.add_geometry(aabb)  # bounding box
 
-    pcd = o3d.geometry.PointCloud()
-    vis.add_geometry(pcd)
-
-    box = o3d.geometry.TriangleMesh.create_box(5, screen_res[1], screen_res[2])
-    box.translate(np.array([screen_res[0], 0, 0]))
+    box = o3d.geometry.TriangleMesh.create_box(3, screen_res[1], screen_res[2])
+    box.translate(np.array([screen_res[0], screen_res[1] / 2, screen_res[2] / 2]), relative=False)
     vis.add_geometry(box)
 
-    fluid = Fluid()
-    fluid.init_particles()
     print(f'boundary={boundary} grid={grid_size} cell_size={cell_size}')
 
     iter = 0
     while True:
         if control.reset:
             fluid.init_particles()
+            rigid.reinitialize()
             resetSimulation(vis)
             print(f'reset simulation')
 
         if not control.paused:
             start_time = time.time()
+
             fluid.move_board()
             fluid.run_pbf()
-            render(fluid, vis, pcd, box)
-            if iter % 20 == 1:
+            rigid.step()
+
+            if iter % 30 == 0:
                 time_interval = time.time() - start_time
-                fluid.print_stats(time_interval)
+                fluid.print_stats(iter, time_interval)
+                fluid.update_point_cloud()
+                rigid.update_meshes()
+                render(vis, fluid, rigid, box)
+                vis.update_renderer()
+
             iter += 1
 
         if not vis.poll_events():
             break
-
-        if not control.paused:
-            vis.update_renderer()
 
 
 if __name__ == '__main__':
